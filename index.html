@@ -175,6 +175,10 @@
       <span class="pe-ic">📐</span>
       <span class="pe-tx"><b>Líder de Capex</b><small>Cargar órdenes de trabajo</small></span>
     </button>
+    <button class="perfil" onclick="entrarInterno('lider')">
+      <span class="pe-ic">🧑‍💼</span>
+      <span class="pe-tx"><b>Líder de sector</b><small>Pedir una reparación o un trabajo nuevo</small></span>
+    </button>
     <button class="perfil" onclick="entrarInterno('deposito')">
       <span class="pe-ic">🏭</span>
       <span class="pe-tx"><b>Jefe de Depósito</b><small>Habilitar los trabajos pedidos</small></span>
@@ -194,9 +198,10 @@
     <button data-v="capdef" data-perfil="syh" onclick="show('capdef',this)">Capacitaciones</button>
     <button data-v="ots" data-perfil="syh" onclick="show('ots',this)">Órdenes de trabajo</button>
     <button data-v="pda" data-perfil="syh" onclick="show('pda',this)">PDA y seguimientos</button>
-    <button data-v="cx-nueva" data-perfil="capex" onclick="show('cx-nueva',this)">Nueva orden</button>
-    <button data-v="cx-mis" data-perfil="capex" onclick="show('cx-mis',this)">Mis órdenes</button>
+    <button data-v="cx-nueva" data-perfil="capex lider" onclick="show('cx-nueva',this)">Nueva orden</button>
+    <button data-v="cx-mis" data-perfil="capex lider" onclick="show('cx-mis',this)">Mis órdenes</button>
     <button data-v="dp-hab" data-perfil="deposito" onclick="show('dp-hab',this)">Para habilitar</button>
+    <button data-v="dp-ok" data-perfil="deposito" onclick="show('dp-ok',this)">Para dar el OK</button>
     <button data-v="dp-seg" data-perfil="deposito" onclick="show('dp-seg',this)">Seguimiento</button>
     <button data-v="contratista" data-perfil="contratista" onclick="show('contratista',this)">Mi acceso</button>
     <button id="btnSalir" style="display:none;background:transparent;color:var(--gold-soft);border:1px solid var(--line)" onclick="volverInicio()">⇦ Cambiar perfil</button>
@@ -268,6 +273,7 @@
   <section class="view" id="v-cx-nueva"><h2 class="sec">Nueva orden de trabajo</h2><p class="lead">Cargá el trabajo que se necesita. Va al Jefe de Depósito para su habilitación.</p><div id="cxNuevaRoot"></div></section>
   <section class="view" id="v-cx-mis"><h2 class="sec">Mis órdenes</h2><p class="lead">Estado de cada orden en el circuito.</p><div id="cxMisRoot"></div></section>
   <section class="view" id="v-dp-hab"><h2 class="sec">Órdenes para habilitar</h2><p class="lead">Revisá cada pedido y habilitá o rechazá la ejecución en el depósito. Si habilitás, indicá desde y hasta qué fecha se puede trabajar.</p><div id="dpHabRoot"></div></section>
+  <section class="view" id="v-dp-ok"><h2 class="sec">Trabajos terminados: dar el OK</h2><p class="lead">Cuando el contratista termina, verificá que se hizo como se planteó en la orden. Con tu OK, Seguridad e Higiene hace el cierre.</p><div id="dpOkRoot"></div></section>
   <section class="view" id="v-dp-seg"><h2 class="sec">Seguimiento de órdenes</h2><p class="lead">Qué se está haciendo en tu depósito y en qué estado está cada trabajo.</p><div id="dpSegRoot"></div></section>
 
   <!-- PDA Y SEGUIMIENTOS -->
@@ -397,6 +403,9 @@ const CONTRACTORS = {
 };
 /* adjuntos de certificado por contratista (memoria) */
 const polizaDoc={}; Object.keys(CONTRACTORS).forEach(c=>polizaDoc[c]=null); polizaDoc.mansilla=""; polizaDoc.chazarreta="certificado-64580105 (19/10/2026) + libre deuda 29/09/2026";
+/* Rubros que cubre cada contratista segun su certificado (S&H los puede ajustar en la app) */
+CONTRACTORS.mansilla.rubros=['elec'];
+CONTRACTORS.chazarreta.rubros=['alb','plom','pint','mant'];
 
 /* fecha base de capacitaciones (editable) */
 const FECHA_BASE = "2026-07-17"; /* fecha de la constancia firmada por el Lic. Arias (17/7) */
@@ -409,7 +418,30 @@ Object.keys(CONTRACTORS).forEach(cid=>{
 });
 /* constancias de capacitación interna firmadas el 17/07/2026 por el Lic. Fabián N. Arias (escaneo embebido) */
 const PLANILLAS = {};
-Object.keys(PLANILLAS).forEach(cid=>Object.keys(capReg[cid]).forEach(k=>capReg[cid][k].firmas.push('Constancia de capacitación interna 17-07 — '+cid)));
+['mansilla','chazarreta'].forEach(cid=>{if(capReg[cid])Object.keys(capReg[cid]).forEach(k=>capReg[cid][k].firmas.push('Constancia de capacitación interna 17-07 — '+cid));});
+/* ---- registro de capacitaciones: se guarda en el dispositivo y se sincroniza ---- */
+const CAPS_KEY='bk_terceros_caps_v1';
+let CAPS_META={lastPush:0,seeded:false};
+function capBlank(){return{fecha:'',presente:false,nota:null,okRef:false,okLic:false,firmas:[]};}
+function capApply(cid,k,r){
+  if(!capReg[cid])return;
+  const cur=capReg[cid][k]||(capReg[cid][k]=capBlank());
+  cur.fecha=r.fecha||'';cur.presente=!!r.presente;cur.nota=(r.nota==null?null:r.nota);cur.okRef=!!r.okRef;cur.okLic=!!r.okLic;cur.firmas=Array.isArray(r.firmas)?r.firmas:[];cur.ts=r.ts||0;
+  if(CONTRACTORS[cid]&&!CONTRACTORS[cid].caps.includes(k))CONTRACTORS[cid].caps.push(k);
+}
+function capsSave(){
+  const reg={};Object.keys(capReg).forEach(cid=>Object.keys(capReg[cid]).forEach(k=>{const r=capReg[cid][k];if(r.ts)(reg[cid]=reg[cid]||{})[k]=r;}));
+  try{localStorage.setItem(CAPS_KEY,JSON.stringify({reg,meta:CAPS_META}));}catch(e){}
+}
+function capsLoad(){
+  try{const o=JSON.parse(localStorage.getItem(CAPS_KEY)||'null');if(o&&o.reg){Object.keys(o.reg).forEach(cid=>Object.keys(o.reg[cid]).forEach(k=>capApply(cid,k,o.reg[cid][k])));if(o.meta)CAPS_META=o.meta;}}catch(e){}
+}
+function capTouch(cid,k){capReg[cid][k].ts=Date.now();capsSave();syncSoon();}
+function capsMerge(lista){let n=0;(lista||[]).forEach(r=>{if(!r||!capReg[r.cid])return;const cur=capReg[r.cid][r.k];if(!cur||(r.ts||0)>(cur.ts||0)){capApply(r.cid,r.k,r);n++;}});if(n)capsSave();return n;}
+function capsPendientes(){const l=[];Object.keys(capReg).forEach(cid=>Object.keys(capReg[cid]).forEach(k=>{const r=capReg[cid][k];if((r.ts||0)>(CAPS_META.lastPush||0))l.push(Object.assign({cid,k},r));}));return l;}
+function capsSembrar(){Object.keys(capReg).forEach(cid=>Object.keys(capReg[cid]).forEach(k=>{const r=capReg[cid][k];if(!r.ts&&r.fecha)r.ts=Date.now();}));CAPS_META.seeded=true;capsSave();}
+function otCapEnsure(cid,k){if(!capReg[cid])return;if(!capReg[cid][k])capReg[cid][k]=capBlank();if(CONTRACTORS[cid]&&!CONTRACTORS[cid].caps.includes(k))CONTRACTORS[cid].caps.push(k);}
+capsLoad();
 /* Certificados originales embebidos (PDF). */
 const DOCS_ORIG={};
 function verDocOrig(cid){
@@ -654,6 +686,7 @@ const DATA = [
 
 /* evidencia por expediente (memoria) */
 const evidence={}; DATA.forEach(d=>evidence[d.id]=[]);
+const FOTOS_N={};function evN(id){return Math.max((evidence[id]||[]).length,FOTOS_N[id]||0);}
 /* fotos de expedientes: solo en la copia de Seguridad e Higiene */
 
 const evCap={"jul-porton":["Portón de la zona de picking (malla y caño estructural)", "Luces de alerta sobre la estructura de picking", "Luces de alerta sobre la estructura de picking"],"ot-garita": ["M-01 · Baño de garita policial (el mensaje no indica la tarea) (antes, relevamiento 07/10/2026)", "M-02 · Cambiar cartel garita policial (antes, relevamiento 07/10/2026)", "M-03 · Piso garita policial (antes, relevamiento 07/10/2026)", "M-04 · Puerta garita policial (antes, relevamiento 07/10/2026)"], "ot-zonacero": ["M-05 · Cable canal Zona Cero (antes, relevamiento 07/10/2026)", "M-06 · Cable colgando de pasillo externo (antes, relevamiento 07/10/2026)"], "ot-camioneros": ["M-07 · Acomodar cables de camioneros (antes, relevamiento 07/10/2026)", "M-08 · Recuadros destapa de luz (antes, relevamiento 07/10/2026)", "M-09 · Tapa de mochila de baño de camioneros (antes, relevamiento 07/10/2026)", "M-10 · Techo de baño de camioneros (antes, relevamiento 07/10/2026)", "M-11 · Cambiar interruptores de sala de camioneros (antes, relevamiento 07/10/2026)", "M-12 · Acomodar caja de luz camioneros (antes, relevamiento 07/10/2026)", "M-12 · Acomodar caja de luz camioneros (antes, relevamiento 07/10/2026)", "M-13 · Tecla de sala de reuniones de camioneros no funciona (antes, relevamiento 07/10/2026)"], "ot-bano": ["M-14 · Tapa ciega baño de pasillo (antes, relevamiento 07/10/2026)", "M-14 · Tapa ciega baño de pasillo (antes, relevamiento 07/10/2026)", "M-15 · Rejilla en piso baño del pasillo (antes, relevamiento 07/10/2026)", "M-16 · Elevar instalación de luz del baño del pasillo (antes, relevamiento 07/10/2026)"], "ot-ventas": ["M-17 · Vidrio antiestallido y cambiar lámpara baño de ventas (luz quemada) (antes, relevamiento 07/10/2026)", "M-17 · Vidrio antiestallido y cambiar lámpara baño de ventas (luz quemada) (antes, relevamiento 07/10/2026)", "M-18 · Cable canal sala de ventas (antes, relevamiento 07/10/2026)", "M-19 · Agregar un soporte para los teléfonos, sala de reuniones de ventas (antes, relevamiento 07/10/2026)", "M-20 · Amurar cable canal al piso, sala de reuniones de ventas (antes, relevamiento 07/10/2026)", "M-21 · Modificar instalaciones eléctricas, sala de reuniones de ventas (antes, relevamiento 07/10/2026)", "M-22 · Agregar panel al techo de sala de reuniones de ventas (antes, relevamiento 07/10/2026)", "M-23 · Acomodar cables sueltos sala de ventas (antes, relevamiento 07/10/2026)", "M-23 · Acomodar cables sueltos sala de ventas (antes, relevamiento 07/10/2026)", "M-24 · Mover de lugar tomacorriente, sala de ventas (antes, relevamiento 07/10/2026)", "M-24 · Mover de lugar tomacorriente, sala de ventas (antes, relevamiento 07/10/2026)"], "ot-tesoreria": ["M-25 · Pasillo de entrada a tesorería (el mensaje no indica la tarea) (antes, relevamiento 07/10/2026)", "M-26 · Modificar instalación eléctrica de sala de tesorería (antes, relevamiento 07/10/2026)", "M-26 · Modificar instalación eléctrica de sala de tesorería (antes, relevamiento 07/10/2026)", "M-26 · Modificar instalación eléctrica de sala de tesorería (antes, relevamiento 07/10/2026)"], "ot-picking": ["M-27 · Sacar cámara de sala de picking (antes, relevamiento 07/10/2026)", "M-28 · Mover tomacorriente de atrás de locker de sala de picking (antes, relevamiento 07/10/2026)"], "ot-caja": ["M-29 · Mejorar instalación eléctrica de la caja (antes, relevamiento 07/10/2026)", "M-29 · Mejorar instalación eléctrica de la caja (antes, relevamiento 07/10/2026)", "M-29 · Mejorar instalación eléctrica de la caja (antes, relevamiento 07/10/2026)"], "ot-rrhh": ["M-30 · Emprolijar cables de los servidores, oficina de RRHH (antes, relevamiento 07/10/2026)", "M-31 · Acomodar caja de luz, oficina de RRHH (antes, relevamiento 07/10/2026)", "M-32 · Emprolijar cables de alimentación eléctrica, oficina de RRHH (antes, relevamiento 07/10/2026)", "M-32 · Emprolijar cables de alimentación eléctrica, oficina de RRHH (antes, relevamiento 07/10/2026)"], "ot-gerencia": ["M-33 · Acomodar cable canal, oficina de Gerencia (antes, relevamiento 07/10/2026)"], "ot-logistica": ["M-34 · Emprolijar cables, oficina de Logística (antes, relevamiento 07/10/2026)", "M-34 · Emprolijar cables, oficina de Logística (antes, relevamiento 07/10/2026)", "M-35 · Agregar tapa de cable canal, oficina de Logística (antes, relevamiento 07/10/2026)", "M-35 · Agregar tapa de cable canal, oficina de Logística (antes, relevamiento 07/10/2026)", "M-36 · Agregar térmica de corte, oficina de Logística (antes, relevamiento 07/10/2026)", "M-37 · Emprolijar instalación eléctrica, oficina de Logística (antes, relevamiento 07/10/2026)", "M-37 · Emprolijar instalación eléctrica, oficina de Logística (antes, relevamiento 07/10/2026)", "M-38 · Acomodar panel del techo, oficina de Logística (antes, relevamiento 07/10/2026)"]};
@@ -662,8 +695,9 @@ const evCap={"jul-porton":["Portón de la zona de picking (malla y caño estruct
 function cname(id){return CONTRACTORS[id]?CONTRACTORS[id].nombre:id}
 function capName(k){return CAPDEF[k]?CAPDEF[k].n:k}
 function addYear(iso){const d=new Date(iso);d.setFullYear(d.getFullYear()+1);return d}
-function fmt(d){return d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'})}
+function fmt(d){if(!d||isNaN(d))return '—';return d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric'})}
 function capStatus(iso){
+  if(!iso||isNaN(new Date(iso)))return {txt:"Sin registrar",bg:"var(--bad-bg)",c:"var(--bad)"};
   const venc=addYear(iso), hoy=new Date(); const dias=(venc-hoy)/86400000;
   if(dias<0)return {txt:"Vencida",bg:"var(--bad-bg)",c:"var(--bad)"};
   if(dias<30)return {txt:"Por vencer",bg:"var(--warn-bg)",c:"var(--warn)"};
@@ -685,7 +719,7 @@ function eppPara(pts){
 const EV_NUEVA={};
 Object.keys(EV_NUEVA).forEach(k=>{evidence[k]=(evidence[k]||[]).concat(EV_NUEVA[k]);});
 function statusOf(d){
-  const ev=evidence[d.id].length>0;
+  const ev=evN(d.id)>0;
   if(d.terminado&&ev)return{cls:"st-ok",txt:"Completo"};
   if(d.terminado&&!ev)return{cls:"st-warn",txt:"Falta evidencia"};
   return{cls:"st-bad",txt:"Incompleto"};
@@ -700,7 +734,7 @@ function show(v,btn){
   if(v==='tablero')updateBoard();
   if(v==='contratista')renderWizard();
   if(v==='pda'&&typeof renderPDA==='function')renderPDA();
-  if(typeof renderOTs==='function'){if(v==='ots')renderOTs();if(v==='cx-nueva')renderCxNueva();if(v==='cx-mis')renderCxMis();if(v==='dp-hab')renderDpHab();if(v==='dp-seg')renderDpSeg();}
+  if(typeof renderOTs==='function'){if(v==='ots')renderOTs();if(v==='cx-nueva')renderCxNueva();if(v==='cx-mis')renderCxMis();if(v==='dp-hab')renderDpHab();if(v==='dp-ok')renderDpOk();if(v==='dp-seg')renderDpSeg();}
 }
 
 /* ============ PERFILES DE ACCESO ============ */
@@ -711,9 +745,10 @@ function entrar(perfil){
   document.getElementById('appRoot').classList.remove('hidden');
   // filtrar botones de nav según perfil
   const botones=[...document.querySelectorAll('nav.tabs button')];
-  botones.forEach(b=>{if(b.id==='btnSalir')return;b.style.display=(b.dataset.perfil===perfil)?'':'none';});
+  const delPerfil=b=>(b.dataset.perfil||'').split(' ').includes(perfil);
+  botones.forEach(b=>{if(b.id==='btnSalir')return;b.style.display=delPerfil(b)?'':'none';});
   // primera solapa visible del perfil
-  const primero=botones.find(b=>b.dataset.perfil===perfil);
+  const primero=botones.find(delPerfil);
   if(primero)show(primero.dataset.v,primero);
   // botón salir al inicio
   document.getElementById('btnSalir').style.display='';
@@ -732,7 +767,7 @@ let FILTER='all';
 function passFilter(d){
   if(FILTER==='all')return true;
   if(FILTER==='critico')return d.critico;
-  if(FILTER==='pendiente')return evidence[d.id].length===0;
+  if(FILTER==='pendiente')return evN(d.id)===0;
 }
 function setFilter(chip,f){
   document.querySelectorAll('#v-historial .chip').forEach(c=>c.classList.remove('active'));
@@ -746,10 +781,36 @@ function respBadges(d){
   if(d.asisText)h+=`<div class="asistext">${d.asisText}</div>`;
   return h;
 }
+function fotosBoxHTML(){
+  const loc=Object.keys(evidence).filter(k=>!/^(rg_|ot_)/.test(k)).reduce((a,k)=>a+evidence[k].length,0);
+  const srv=Object.values(FOTOS_N).reduce((a,b)=>a+b,0);
+  if(loc&&SYNC.url)return `<div class="k">Fotos de los trabajos</div><div style="font-size:12.5px;margin:6px 0">Esta copia tiene ${loc} fotos y el servidor tiene ${srv}. ${loc>srv?'<button class="pbtn g" onclick="fotosSubir()">Subir las fotos al servidor</button> <span id="fotosProg"></span>':'Están todas subidas.'}</div>`;
+  if(srv)return `<div class="k">Fotos de los trabajos</div><div style="font-size:12.5px;margin:6px 0">Hay ${srv} fotos guardadas en el servidor. Tocá “Ver fotos” en cada trabajo para cargarlas.</div>`;
+  return '';
+}
+async function fotosIdxCargar(){try{const d=await srvCall({a:'fotos_idx',t:SYNC.token});if(d&&d.idx){Object.assign(FOTOS_N,d.idx);renderGrid();}}catch(e){}}
+async function fotosCargar(id,btn){
+  if(btn){btn.disabled=true;btn.textContent='Cargando…';}
+  try{const d=await srvCall({a:'fotos_get',t:SYNC.token,id});if(d&&d.imgs){evidence[id]=d.imgs;renderGrid();return;}alert('No se pudieron cargar: '+((d&&d.error)||''));}catch(e){alert('No pude conectar con el servidor.');}
+  renderGrid();
+}
+async function fotosSubir(){
+  if(!SYNC.token||SYNC.rol!=='syh'){alert('Ingresá como Seguridad e Higiene, con conexión, para subir las fotos.');return;}
+  const ids=Object.keys(evidence).filter(k=>!/^(rg_|ot_)/.test(k)&&evidence[k].length&&(FOTOS_N[k]||0)!==evidence[k].length);
+  const tot=ids.reduce((a,k)=>a+evidence[k].length,0);let hechas=0;
+  for(const id of ids){const arr=evidence[id];for(let i=0;i<arr.length;i++){
+    let ok=false,err='';
+    for(let t=0;t<3&&!ok;t++){try{const d=await srvCall({a:'fotos_set',t:SYNC.token,id,i,n:arr.length,img:arr[i]});if(d&&d.ok)ok=true;else err=(d&&d.error)||'sin respuesta';}catch(e){err=String(e.message||e);}}
+    if(!ok){alert('Se cortó en "'+id+'" (foto '+(i+1)+'): '+err+'. Volvé a apretar el botón: sigue desde donde quedó.');await fotosIdxCargar();return;}
+    hechas++;const pr=document.getElementById('fotosProg');if(pr)pr.textContent='Subiendo '+hechas+' de '+tot+'…';}
+    FOTOS_N[id]=arr.length;}
+  alert('Listo: '+tot+' fotos subidas al servidor.');await fotosIdxCargar();
+}
 function renderGrid(){
   const g=document.getElementById('grid');g.innerHTML='';
+  if(PERFIL==='syh'){const fb=fotosBoxHTML();if(fb){const b=document.createElement('div');b.className='card';b.style.gridColumn='1/-1';b.innerHTML=fb;g.appendChild(b);}}
   DATA.filter(passFilter).forEach(d=>{
-    const st=statusOf(d),ev=evidence[d.id].length>0;
+    const st=statusOf(d),ev=evN(d.id)>0;
     const el=document.createElement('div');el.className='exp';
     el.innerHTML=`
       <div class="head">
@@ -765,13 +826,14 @@ function renderGrid(){
           <div class="checks">
             <div class="chk done"><span class="box">✓</span>Capacitación exigida para el rubro</div>
             ${d.id.startsWith('ot-')?'<div class="chk miss"><span class="box">—</span>PT a emitir antes de empezar cada tarea</div>':'<div class="chk done"><span class="box">✓</span>PT emitido (retroactivo)</div>'}
-            <div class="chk ${ev?'done':'miss'}"><span class="box">${ev?'✓':'—'}</span>Evidencia ${ev?`(${evidence[d.id].length})`:'pendiente'}</div>
+            <div class="chk ${ev?'done':'miss'}"><span class="box">${ev?'✓':'—'}</span>Evidencia ${ev?`(${evN(d.id)})`:'pendiente'}</div>
           </div>
         </div>
         <div class="evidence">
           <div class="k" style="margin-bottom:8px">Evidencia del trabajo</div>
           <label class="drop">📷 Subí fotos (antes / durante / después)
             <input type="file" accept="image/*" multiple style="display:none" onchange="addPhotos('${d.id}',this)"></label>
+          ${(!evidence[d.id].length&&(FOTOS_N[d.id]||0))?`<button class="pbtn g" style="margin:6px 0" onclick="fotosCargar('${d.id}',this)">📷 Ver ${FOTOS_N[d.id]} fotos</button>`:''}
           <div class="thumbs" id="th-${d.id}"></div>
         </div>
       </div>
@@ -793,8 +855,8 @@ function rmPhoto(id,i){evidence[id].splice(i,1);renderGrid();}
 /* ============ TABLERO ============ */
 function updateBoard(){
   const tot=DATA.length;
-  const withEv=DATA.filter(d=>evidence[d.id].length>0).length;
-  const complete=DATA.filter(d=>d.terminado&&evidence[d.id].length>0).length;
+  const withEv=DATA.filter(d=>evN(d.id)>0).length;
+  const complete=DATA.filter(d=>d.terminado&&evN(d.id)>0).length;
   const withPt=DATA.filter(d=>d.pts.some(p=>p.c!=='pt-none')).length;
   let capsTot=0,capsOk=0;
   Object.keys(capReg).forEach(cid=>Object.keys(capReg[cid]).forEach(k=>{
@@ -908,10 +970,10 @@ function renderContractors(){
     wrap.appendChild(el);
   });
 }
-function setCapField(cid,k,campo,val){capReg[cid][k][campo]=val;renderContractors();updateBoard();}
+function setCapField(cid,k,campo,val){capReg[cid][k][campo]=val;capTouch(cid,k);renderContractors();updateBoard();}
 function addFirmas(cid,k,input){
   [...input.files].forEach(f=>capReg[cid][k].firmas.push(f.name));
-  renderContractors();
+  capTouch(cid,k);renderContractors();
 }
 /* ---- Examen de conocimiento ---- */
 let examCtx=null;
@@ -943,7 +1005,7 @@ function responder(i){
   examCtx.idx++;
   if(examCtx.idx<quiz.preguntas.length){pintarPregunta();return;}
   const nota=Math.round(examCtx.aciertos/quiz.preguntas.length*100);
-  capReg[examCtx.cid][examCtx.k].nota=nota;
+  capReg[examCtx.cid][examCtx.k].nota=nota;capTouch(examCtx.cid,examCtx.k);
   const aprob=nota>=UMBRAL;
   document.getElementById('mBody').innerHTML=`
     <div style="text-align:center;padding:20px 0">
@@ -1065,14 +1127,15 @@ function subview(){
 
 /* --- Mis capacitaciones (PAC): estado, alerta de vencimiento, botón para realizar --- */
 function viewMisCaps(){
-  const cid=ct.loged;
+  const cid=ct.loged;otEnsureCaps(cid);
   const filas=CONTRACTORS[cid].caps.map(k=>{
     const r=capReg[cid][k], vig=capStatus(r.fecha), venc=addYear(r.fecha);
     const dias=Math.ceil((venc-new Date())/86400000);
     const cumplida=r.presente&&r.nota!==null&&r.nota>=UMBRAL&&r.okRef&&r.okLic&&r.firmas.length>0&&vig.txt!=="Vencida";
     const aprobadoQuiz=r.nota!==null&&r.nota>=UMBRAL;
     let alerta='';
-    if(vig.txt==='Vencida') alerta=`<span style="color:var(--bad);font-weight:700">Vencida — rehacer</span>`;
+    if(!r.fecha) alerta=`<span style="color:var(--bad);font-weight:700">Sin registrar — realizar</span>`;
+    else if(vig.txt==='Vencida') alerta=`<span style="color:var(--bad);font-weight:700">Vencida — rehacer</span>`;
     else if(dias<=30) alerta=`<span style="color:var(--warn);font-weight:700">Vence en ${dias} día${dias===1?'':'s'}</span>`;
     else alerta=`<span style="color:var(--muted)">Vence en ${dias} días</span>`;
     const estado=cumplida?{t:'Cumplida',b:'var(--ok-bg)',c:'var(--ok)'}:(aprobadoQuiz?{t:'Quiz aprobado — falta firma',b:'var(--warn-bg)',c:'var(--warn)'}:{t:'Pendiente',b:'var(--bad-bg)',c:'var(--bad)'});
@@ -1123,7 +1186,7 @@ function viewMisTrabajos(){
   const mine=pendientes.filter(p=>p.contratista===cid);
   const histRows=hist.map(d=>{
     const rol=d.resp.includes(cid)?'Responsable':'Acompaña';
-    const ev=evidence[d.id].length>0;
+    const ev=evN(d.id)>0;
     const est=d.terminado&&ev?{t:'Completo',b:'var(--ok-bg)',c:'var(--ok)'}:(d.terminado?{t:'Falta evidencia',b:'var(--warn-bg)',c:'var(--warn)'}:{t:'En curso',b:'var(--bad-bg)',c:'var(--bad)'});
     return `<div class="miniwork"><div style="flex:1"><b>${d.fecha}</b> — ${d.titulo}<div style="font-size:11px;color:var(--muted)">${rol}</div></div><span class="capstate" style="background:${est.b};color:${est.c}">${est.t}</span></div>`;
   }).join('');
@@ -1248,6 +1311,7 @@ function responderCt(i){
   const r=capReg[cid][k];
   r.nota=nota;
   if(aprob){ r.presente=true; r.fecha=new Date().toISOString().slice(0,10); } // realizada hoy
+  capTouch(cid,k);
   document.getElementById('mBody').innerHTML=`
     <div style="text-align:center;padding:20px 0">
       <div style="font-size:44px;font-weight:800;color:${aprob?'var(--ok)':'var(--bad)'}">${nota}%</div>
@@ -1735,19 +1799,24 @@ const SYNC={url:'https://script.google.com/macros/s/AKfycbx8CD49KW8Zh01hmepe7kFC
 if(SYNC.url.indexOf('__SYNC')===0)SYNC.url='';
 
 const OT_KEY='bk_terceros_ot_v1';
-const OT_ROL={syh:'Seguridad e Higiene',capex:'Líder de Capex',deposito:'Jefe de Depósito'};
+const OT_ROL={syh:'Seguridad e Higiene',capex:'Líder de Capex',lider:'Líder de sector',deposito:'Jefe de Depósito'};
+/* Rubros (oficios). Cada contratista solo puede hacer los rubros que cubre su certificado. */
+const RUBROS={elec:{n:'Electricidad',cap:'elec'},alb:{n:'Albañilería / construcción',cap:null},herr:{n:'Herrería / soldadura',cap:'herr'},plom:{n:'Plomería / sanitarios',cap:null},pint:{n:'Pintura',cap:'quim'},mant:{n:'Mantenimiento general',cap:null}};
+function rubrosDe(cid){return (PDA.rubros&&PDA.rubros[cid])||(CONTRACTORS[cid]&&CONTRACTORS[cid].rubros)||[];}
+function rubroCts(r){return Object.keys(CONTRACTORS).filter(c=>rubrosDe(c).includes(r));}
 const OT_ESTADOS={
   pend_hab:{t:'Pendiente de habilitación',bg:'var(--warn-bg)',c:'var(--warn)',paso:1},
   rechazada:{t:'Rechazada por Depósito',bg:'var(--bad-bg)',c:'var(--bad)',paso:1},
   habilitada:{t:'Habilitada · PT solicitado a S&H',bg:'var(--warn-bg)',c:'var(--warn)',paso:2},
   pt_emitido:{t:'PT emitido · lista para ejecutar',bg:'#e3ecf7',c:'var(--navy-3)',paso:3},
   en_ejec:{t:'En ejecución',bg:'#e3ecf7',c:'var(--navy-3)',paso:4},
-  finalizada:{t:'Finalizada · falta revisión S&H',bg:'var(--warn-bg)',c:'var(--warn)',paso:5},
-  cerrada:{t:'Cerrada',bg:'var(--ok-bg)',c:'var(--ok)',paso:6},
+  finalizada:{t:'Finalizada · falta el OK del Depósito',bg:'var(--warn-bg)',c:'var(--warn)',paso:5},
+  conforme:{t:'OK del Depósito · falta cierre S&H',bg:'#e3ecf7',c:'var(--navy-3)',paso:6},
+  cerrada:{t:'Cerrada',bg:'var(--ok-bg)',c:'var(--ok)',paso:7},
   cancelada:{t:'Cancelada',bg:'#ececec',c:'#555',paso:0}
 };
 const OT_TIPOS={reparacion:'Reparación',nuevo:'Trabajo nuevo'};
-const OT_PASOS=['Orden de Capex','Habilitación Depósito','Permiso (S&H)','Antes + ejecución','Después / evidencia','Cierre S&H'];
+const OT_PASOS=['Pedido del líder','Habilitación Depósito','Permiso (S&H)','Antes + ejecución','Después / evidencia','OK Depósito','Cierre S&H'];
 
 let OT=(function(){try{const s=localStorage.getItem(OT_KEY);if(s){const o=JSON.parse(s);if(o&&o.ots)return o;}}catch(e){}return{ots:[],lastPull:0,lastPush:0,syncOk:0,syncErr:''};})();
 let INT={rol:null,user:null,suplente:false,pend:null};
@@ -1776,15 +1845,16 @@ async function syncPull(){
     const d=await srvCall({a:'pull',t:SYNC.token,since:OT.lastPull||0});
     if(!d||d.error)throw new Error((d&&d.error)||'respuesta inválida');
     const ots=d.ots||[],regs=d.registros||[];
-    const n1=otMerge(ots),n2=regMerge(regs);let n3=0,mx=OT.lastPull||0;
-    ots.concat(regs).forEach(x=>{mx=Math.max(mx,x.ts||0);});
+    const caps=d.caps||[];const n1=otMerge(ots),n2=regMerge(regs),n4=capsMerge(caps);let n3=0,mx=OT.lastPull||0;
+    ots.concat(regs,caps).forEach(x=>{mx=Math.max(mx,x.ts||0);});
     if(d.cfg&&((d.cfg.ts||0)>(PDA.cfgTs||0)||!!PDA.cfgFiltered!==(SYNC.rol==='ct'))){
-      PDA.pdas=d.cfg.pdas||PDA.pdas;PDA.feriados=d.cfg.feriados||PDA.feriados;if(d.cfg.contactos)PDA.contactos=d.cfg.contactos;
+      PDA.pdas=d.cfg.pdas||PDA.pdas;PDA.feriados=d.cfg.feriados||PDA.feriados;if(d.cfg.contactos)PDA.contactos=d.cfg.contactos;if(d.cfg.rubros)PDA.rubros=d.cfg.rubros;
       PDA.cfgTs=d.cfg.ts||0;PDA.cfgFiltered=(SYNC.rol==='ct');n3=1;
     }
     if(n2||n3)pdaAplicarEst();
     OT.lastPull=mx;OT.syncOk=Date.now();OT.syncErr='';otSave(false);
     if(n2||n3)pdaSaveRaw();
+    if(n4){try{renderContractors();updateBoard();if(PERFIL==='contratista'&&ct.loged)renderWizard();}catch(e){}}
     if(n1)otRefresh();else otRefreshSyncBars();
     if(n2||n3){try{refrescarPDA();}catch(e){}}
   }catch(e){OT.syncErr=String(e.message||e);otRefreshSyncBars();}
@@ -1796,13 +1866,16 @@ async function syncPush(){
     if(SYNC.rol==='syh'&&PDA.dirtyCfg){_syncBusy=false;await syncPull();_syncBusy=true;PDA.cfgTs=Date.now();PDA.dirtyCfg=false;pdaSaveRaw();}
     const ots=OT.ots.filter(o=>(o.ts||0)>(OT.lastPush||0));
     const regs=PDA.registros.filter(r=>(r.ts||0)>(PDA.lastPushReg||0));
-    const cfg=(SYNC.rol==='syh'&&(PDA.cfgTs||0)>(PDA.cfgPushed||0))?{ts:PDA.cfgTs,pdas:PDA.pdas,feriados:PDA.feriados,contactos:PDA.contactos}:null;
-    if(!ots.length&&!regs.length&&!cfg){_syncBusy=false;return;}
-    const d=await srvCall({a:'push',t:SYNC.token,ots,registros:regs,cfg});
+    const cfg=(SYNC.rol==='syh'&&(PDA.cfgTs||0)>(PDA.cfgPushed||0))?{ts:PDA.cfgTs,pdas:PDA.pdas,feriados:PDA.feriados,contactos:PDA.contactos,rubros:PDA.rubros||null}:null;
+    if(SYNC.rol==='syh'&&!CAPS_META.seeded)capsSembrar();
+    const caps=(SYNC.rol==='syh'||SYNC.rol==='ct')?capsPendientes():[];
+    if(!ots.length&&!regs.length&&!cfg&&!caps.length){_syncBusy=false;return;}
+    const d=await srvCall({a:'push',t:SYNC.token,ots,registros:regs,cfg,caps});
     if(!d||d.error)throw new Error((d&&d.error)||'respuesta inválida');
     if(ots.length)OT.lastPush=Math.max(...ots.map(o=>o.ts||0));
     if(regs.length)PDA.lastPushReg=Math.max(...regs.map(r=>r.ts||0));
     if(cfg)PDA.cfgPushed=cfg.ts;
+    if(caps.length){CAPS_META.lastPush=Math.max(...caps.map(c=>c.ts||0));capsSave();}
     OT.syncOk=Date.now();OT.syncErr='';otSave(false);pdaSaveRaw();otRefreshSyncBars();
   }catch(e){OT.syncErr=String(e.message||e);otRefreshSyncBars();}
   _syncBusy=false;
@@ -1811,7 +1884,7 @@ function syncSoon(){if(SYNC.url&&SYNC.token){clearTimeout(_otPushT);_otPushT=set
 let _syncTimer=null;
 function syncStart(){
   if(!SYNC.url||!SYNC.token)return;
-  syncPull().then(syncPush);clearInterval(_syncTimer);
+  syncPull().then(syncPush);if(SYNC.rol!=='ct')fotosIdxCargar();clearInterval(_syncTimer);
   _syncTimer=setInterval(()=>{if(!document.hidden&&SYNC.token)syncPull().then(syncPush);},60000);
 }
 function syncStop(){clearInterval(_syncTimer);SYNC.token='';SYNC.rol='';SYNC.cid='';}
@@ -1839,7 +1912,7 @@ function otImportar(input){
 /* ---- actor, historial ---- */
 function otActor(){
   if(PERFIL==='contratista'&&ct.loged)return{nombre:pdCname(ct.loged),rol:'Contratista'};
-  if(PERFIL==='capex'||PERFIL==='deposito')return{nombre:(INT.user?INT.user.nombre:'')+(INT.suplente?' (por S&H)':''),rol:OT_ROL[PERFIL]};
+  if(PERFIL==='capex'||PERFIL==='lider'||PERFIL==='deposito')return{nombre:(INT.user?INT.user.nombre:'')+(INT.suplente?' (por S&H)':''),rol:OT_ROL[PERFIL]};
   return{nombre:'Edu Díaz',rol:'Seguridad e Higiene'};
 }
 function otLog(o,accion,obs){const a=otActor();(o.hist=o.hist||[]).push({ts:Date.now(),quien:a.nombre,rol:a.rol,accion,obs:obs||''});o.ts=Date.now();}
@@ -1852,7 +1925,7 @@ function otFmtTs(ts){return new Date(ts).toLocaleString('es-AR',{day:'2-digit',m
 function entrarInterno(rol){
   INT.pend=rol;
   document.getElementById('intRol').textContent=OT_ROL[rol];
-  const hay=USUARIOS_INT.some(u=>u.rol===rol);
+  const hay=rol==='lider'?!!SYNC.url:USUARIOS_INT.some(u=>u.rol===rol);
   document.getElementById('intMsg').textContent=hay?'Solo personas habilitadas por Seguridad e Higiene.':'Todavía no hay personas cargadas para este perfil. Pedile el alta a Seguridad e Higiene.';
   document.getElementById('intErr').style.display='none';document.getElementById('intDni').value='';
   document.getElementById('intLogin').classList.add('on');setTimeout(()=>document.getElementById('intDni').focus(),50);
@@ -1867,7 +1940,7 @@ async function intLogin(){
   if(SYNC.url){
     try{
       const d=await srvCall({a:'login',k:'int',rol:INT.pend,h:hh});
-      if(d&&d.ok){u={rol:INT.pend,nombre:d.nombre};SYNC.token=d.token;SYNC.rol=INT.pend;}
+      if(d&&d.ok){u={rol:INT.pend,nombre:d.nombre,id:d.id||'',sector:d.sector||''};SYNC.token=d.token;SYNC.rol=INT.pend;}
       else if(d&&d.error==='bloqueado'){mal('Demasiados intentos. Esperá 15 minutos y probá de nuevo.');return;}
       else{mal();return;}
     }catch(x){
@@ -1905,7 +1978,7 @@ function otFotoDel(id,cat,i){const o=otPorId(id);if(!o)return;o.ev[cat].splice(i
 function otPipe(o){const p=(OT_ESTADOS[o.estado]||{}).paso||0;return `<div class="otpipe">${OT_PASOS.map((t,i)=>`<span class="${i+1<=p?'on':''}">${i+1}. ${t}</span>`).join('')}</div>`;}
 function otCard(o,extra,opts){
   opts=opts||{};const t=otTarea(o);
-  const vencida=o.compromiso&&!['cerrada','cancelada','finalizada'].includes(o.estado)&&pdDias(o.compromiso)<0;
+  const vencida=o.compromiso&&!['cerrada','cancelada','finalizada','conforme'].includes(o.estado)&&pdDias(o.compromiso)<0;
   const hab=o.habil?`<div class="info-note" style="background:#fff;border-color:var(--line);color:var(--ink);margin:8px 0;font-size:12px"><b style="color:var(--navy)">Habilitado por ${esc(o.habil.por)}</b> el ${pdFmt(o.habil.fecha)}${o.habil.desde?' · ejecución autorizada del '+pdFmt(o.habil.desde)+' al '+pdFmt(o.habil.hasta):''}${o.habil.obs?'<br>Condiciones: '+esc(o.habil.obs):''}</div>`:'';
   const rech=(o.estado==='rechazada'&&o.rechazo)?`<div class="info-note" style="background:var(--bad-bg);border-color:#e6b3a8;color:var(--bad);margin:8px 0;font-size:12px"><b>Motivo del rechazo (${esc(o.rechazo.por)}):</b> ${esc(o.rechazo.obs)}</div>`:'';
   const hist=(o.hist||[]).slice().reverse().map(h=>`<div style="font-size:11.5px;padding:3px 0;border-bottom:1px dashed #e4dcc4"><b>${esc(h.accion)}</b> · ${esc(h.quien)} (${esc(h.rol)}) · ${otFmtTs(h.ts)}${h.obs?'<br><i>'+esc(h.obs)+'</i>':''}</div>`).join('');
@@ -1916,7 +1989,7 @@ function otCard(o,extra,opts){
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start">${otBadge(o)}${o.tipo==='nuevo'?'<span class="capstate" style="background:#e8e4f5;color:#4b3f8f">Trabajo nuevo</span>':''}</div></div>
     ${opts.pipe===false?'':otPipe(o)}
     <div style="font-size:13px;margin:8px 0">${esc(o.desc)}</div>
-    <div style="font-size:12px;color:var(--muted)">Implica: ${esc(t.n)} · Permisos: ${t.pts.map(p=>p.t).join(' + ')||'sin PT crítico'} · plazo ${esc(otPlazoN(o))} · pedida por ${esc(o.creadaPor)} el ${pdFmt(o.creada)}</div>
+    <div style="font-size:12px;color:var(--muted)">${o.rubro&&RUBROS[o.rubro]?'Rubro: '+RUBROS[o.rubro].n+' · ':''}${o.grupo?'Tarea '+o.grupoN+' de '+o.grupoT+' del mismo pedido · ':''}Implica: ${esc(t.n)} · Permisos: ${t.pts.map(p=>p.t).join(' + ')||'sin PT crítico'} · plazo ${esc(otPlazoN(o))} · pedida por ${esc(o.creadaPor)} el ${pdFmt(o.creada)}</div>
     ${rech}${hab}${otEvHTML(o,opts.borrar)}${extra||''}
     <details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--navy-2);font-weight:700">Historial (${(o.hist||[]).length})</summary>${hist}</details></div>`;
 }
@@ -1958,39 +2031,55 @@ function otTareaDe(impl){
   return{n:n.join(' + ')||'Mantenimiento común',pts,caps,epp:epp.length?epp.join(' · '):'Calzado de seguridad y guantes.'};
 }
 function otTarea(o){return o.impl?otTareaDe(o.impl):(TAREAS[o.tarea]||otTareaDe([]));}
+function otReqCaps(o){const t=otTarea(o);const caps=[...(t.caps||[])];const r=RUBROS[o.rubro];if(r&&r.cap&&!caps.includes(r.cap))caps.push(r.cap);return [...new Set([...caps,...Object.keys(CAPDEF).filter(k=>CAPDEF[k].base)])];}
+function otEnsureCaps(cid){OT.ots.forEach(o=>{if(o.contratistas.includes(cid)&&['habilitada','pt_emitido','en_ejec'].includes(o.estado))otReqCaps(o).forEach(k=>otCapEnsure(cid,k));});}
 function otHabiles(n){let f=pdHoy(),c=0;while(c<n){f=pdAdd(f,1);if(!pdNoLab(f))c++;}return f;}
 function otPlazoFecha(k){return k==='urg'?otHabiles(2):k==='sem'?pdSigLab(pdAdd(pdHoy(),7)):k==='q'?pdSigLab(pdAdd(pdHoy(),15)):k==='m'?pdSigLab(pdAdd(pdHoy(),30)):'';}
 function otPrioDe(f){const d=pdDias(f);return d<=3?'Alta':d<=10?'Media':'Baja';}
 function otPlazoN(o){const p=OT_PLAZOS.find(x=>x[0]===o.plazo);return p?(p[0]==='otro'?'fecha elegida':p[1].toLowerCase()):'';}
-function cxVacio(){return{fotos:[],editId:null,titulo:'',sector:'',desc:'',tipo:'',impl:[],cts:[],plazo:'',fecha:''};}
+function cxTVacia(){return{titulo:'',rubro:'',impl:[],cts:[]};}
+function cxVacio(){return{fotos:[],editId:null,sector:'',tipo:'',desc:'',plazo:'',fecha:'',tareas:[cxTVacia()]};}
 let cxForm=cxVacio();
-function cxTog(campo,val){const a=cxForm[campo];const i=a.indexOf(val);if(i<0)a.push(val);else a.splice(i,1);renderCxNueva();}
 function cxSet(campo,val){cxForm[campo]=val;if(campo==='plazo'&&val!=='otro')cxForm.fecha=otPlazoFecha(val);renderCxNueva();}
+function cxTSet(i,campo,val){const t=cxForm.tareas[i];t[campo]=val;if(campo==='rubro'){const l=rubroCts(val);t.cts=l.length===1?[l[0]]:[];}renderCxNueva();}
+function cxTTog(i,campo,val){const a=cxForm.tareas[i][campo];const j=a.indexOf(val);if(j<0)a.push(val);else a.splice(j,1);renderCxNueva();}
+function cxTAdd(){cxForm.tareas.push(cxTVacia());renderCxNueva();}
+function cxTDel(i){cxForm.tareas.splice(i,1);if(!cxForm.tareas.length)cxForm.tareas.push(cxTVacia());renderCxNueva();}
 const cxSel=(on,onclick,txt,sub)=>`<button type="button" class="sel ${on?'on':''}" onclick="${onclick}">${txt}${sub?`<small>${sub}</small>`:''}</button>`;
-function cxPrev(){
-  const t=otTareaDe(cxForm.impl);
-  if(!cxForm.impl.length)return `<div class="info-note" style="background:var(--ok-bg);border-color:#a8d8bd;color:var(--ok);font-size:12.5px"><b>Sin permisos críticos.</b> Si Depósito lo habilita, queda autorizado solo (registro + EPP) siempre que el contratista tenga seguro y capacitaciones al día.</div>`;
+function cxPrev(tt){
+  const t=otTareaDe(tt.impl);const extra=(RUBROS[tt.rubro]&&RUBROS[tt.rubro].cap)?[RUBROS[tt.rubro].cap]:[];
+  const caps=[...new Set([...t.caps,...extra])];
+  if(!tt.impl.length&&!caps.length)return `<div class="info-note" style="background:var(--ok-bg);border-color:#a8d8bd;color:var(--ok);font-size:12.5px"><b>Sin permisos críticos.</b> Si Depósito lo habilita, queda autorizado solo (registro + EPP) siempre que el contratista tenga seguro, rubro y capacitaciones al día.</div>`;
   return `<div class="info-note" style="background:#fff;border-color:var(--gold);color:var(--ink);font-size:12.5px;line-height:1.7"><b style="color:var(--navy)">Se va a pedir automáticamente:</b><br>
     Permisos: ${t.pts.length?t.pts.map(p=>`<span class="pt ${p.c}" style="margin-right:5px">${p.t}</span>`).join(''):'<i>ninguno crítico (registro + EPP)</i>'}<br>
-    Capacitaciones exigidas (además de las base): ${t.caps.map(capName).join(', ')}<br>EPP: ${esc(t.epp)}</div>`;
+    Capacitaciones exigidas (además de las base): ${caps.length?caps.map(capName).join(', '):'ninguna adicional'}<br>EPP: ${esc(t.epp)}</div>`;
 }
 function renderCxNueva(){
   const box=document.getElementById('cxNuevaRoot');if(!box)return;
   const f=cxForm,e=f.editId?otPorId(f.editId):null;
-  const cids=Object.keys(CONTRACTORS);
+  const tarea=(tt,i)=>{
+    const hab=tt.rubro?rubroCts(tt.rubro):[];
+    return `<div class="card" style="border-left:4px solid var(--gold);margin-top:12px"><div style="display:flex;justify-content:space-between;align-items:center"><div class="k">Tarea ${i+1}</div>${(f.tareas.length>1&&!e)?`<button class="pbtn r" onclick="cxTDel(${i})">Quitar</button>`:''}</div>
+      <div class="pk">¿Qué hay que hacer?</div><input class="pi" value="${esc(tt.titulo)}" oninput="cxForm.tareas[${i}].titulo=this.value" placeholder="Ej.: Cambiar luminarias del pasillo de picking">
+      <div class="pk">Rubro (qué oficio lo hace)</div><div class="selrow">${Object.keys(RUBROS).map(k=>cxSel(tt.rubro===k,`cxTSet(${i},'rubro','${k}')`,RUBROS[k].n)).join('')}</div>
+      <div class="pk">¿Qué implica? <span style="font-weight:400;text-transform:none;letter-spacing:0">(tildá lo que corresponda; define los permisos)</span></div>
+      <div class="selrow">${Object.keys(OT_IMPL).map(k=>cxSel(tt.impl.includes(k),`cxTTog(${i},'impl','${k}')`,OT_IMPL[k].l)).join('')}</div>
+      <div style="margin-top:10px">${cxPrev(tt)}</div>
+      <div class="pk">¿Quién lo hace?</div>
+      ${!tt.rubro?'<div style="font-size:12.5px;color:var(--muted)">Elegí primero el rubro.</div>':(hab.length?`<div class="selrow">${hab.map(c=>cxSel(tt.cts.includes(c),`cxTTog(${i},'cts','${c}')`,esc(pdCname(c)))).join('')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:6px">Solo aparecen los contratistas cuya cobertura incluye ${esc(RUBROS[tt.rubro].n)}.</div>`:`<div class="info-note" style="background:var(--bad-bg);border-color:#e6b3a8;color:var(--bad);font-size:12.5px">Ningún contratista cargado cubre ${esc(RUBROS[tt.rubro].n)}. Consultá con Seguridad e Higiene antes de pedirlo.</div>`)}
+    </div>`;
+  };
   box.innerHTML=intHeader()+otSyncBar()+`<div class="card"><div class="k">${e?'Corregir y reenviar '+e.id:'Pedir un trabajo'}</div>
     ${e&&e.rechazo?`<div class="info-note" style="background:var(--bad-bg);border-color:#e6b3a8;color:var(--bad);margin:8px 0;font-size:12px"><b>Motivo del rechazo:</b> ${esc(e.rechazo.obs)}</div>`:''}
-    <div class="pk">1 · ¿Qué hay que hacer?</div><input class="pi" value="${esc(f.titulo)}" oninput="cxForm.titulo=this.value" placeholder="Ej.: Cambiar luminarias del pasillo de picking">
-    <div class="pk">2 · ¿Dónde?</div><input class="pi" value="${esc(f.sector)}" oninput="cxForm.sector=this.value" placeholder="Ej.: Picking, playón, oficina de logística">
-    <div class="pk">3 · ¿Es reparación o trabajo nuevo?</div><div class="selrow">${cxSel(f.tipo==='reparacion',"cxSet('tipo','reparacion')",'🔧 Reparación','ya existía · antes y después')}${cxSel(f.tipo==='nuevo',"cxSet('tipo','nuevo')",'🆕 Trabajo nuevo','no existía · evidencia de lo nuevo')}</div>
-    <div class="pk">4 · ¿Qué implica? <span style="font-weight:400;text-transform:none;letter-spacing:0">(tildá lo que corresponda; define los permisos)</span></div>
-    <div class="selrow">${Object.keys(OT_IMPL).map(k=>cxSel(f.impl.includes(k),`cxTog('impl','${k}')`,OT_IMPL[k].l)).join('')}</div>
-    <div style="font-size:11.5px;color:var(--muted);margin-top:6px">Si es eléctrico con chispas o llama, tildá también Soldadura. Si no tildás nada, es mantenimiento común.</div>
-    <div style="margin-top:10px">${cxPrev()}</div>
-    <div class="pk">5 · ¿Quién lo hace?</div><div class="selrow">${cids.map(c=>cxSel(f.cts.includes(c),`cxTog('cts','${c}')`,esc(pdCname(c)))).join('')}</div>
-    <div class="pk">6 · Plazo</div><div class="selrow">${OT_PLAZOS.map(p=>cxSel(f.plazo===p[0],`cxSet('plazo','${p[0]}')`,p[1],p[2])).join('')}</div>
+    <div class="pk">1 · ¿Dónde?</div><input class="pi" value="${esc(f.sector)}" oninput="cxForm.sector=this.value" placeholder="Ej.: Picking, playón, oficina de logística">
+    <div class="pk">2 · ¿Es reparación o trabajo nuevo?</div><div class="selrow">${cxSel(f.tipo==='reparacion',"cxSet('tipo','reparacion')",'🔧 Reparación','ya existía · antes y después')}${cxSel(f.tipo==='nuevo',"cxSet('tipo','nuevo')",'🆕 Trabajo nuevo','no existía · evidencia de lo nuevo')}</div>
+    <div class="pk">3 · Plazo</div><div class="selrow">${OT_PLAZOS.map(p=>cxSel(f.plazo===p[0],`cxSet('plazo','${p[0]}')`,p[1],p[2])).join('')}</div>
     ${f.plazo==='otro'?`<input type="date" class="pi" style="max-width:220px;margin-top:8px" value="${f.fecha}" min="${pdHoy()}" onchange="cxForm.fecha=this.value;renderCxNueva()">`:''}
     ${f.fecha?`<div style="font-size:12.5px;margin-top:8px;color:var(--navy)">📅 Fecha límite: <b>${pdFmt(f.fecha)}</b> · prioridad <b>${otPrioDe(f.fecha)}</b> <span style="color:var(--muted)">(no cuenta domingos ni feriados)</span></div>`:''}
+    <div class="pk" style="margin-top:14px">4 · Tareas</div>
+    <div class="info-note" style="font-size:12px">Si el trabajo mezcla oficios distintos (por ejemplo albañilería y poner una caja de luz), cargá <b>una tarea por cada rubro</b>: cada una la hace quien esté habilitado para ese oficio y tiene su propio permiso y su propio OK.</div>
+    ${f.tareas.map(tarea).join('')}
+    ${e?'':'<button class="pbtn g" style="margin-top:12px" onclick="cxTAdd()">+ Agregar otra tarea (otro rubro)</button>'}
     <details style="margin-top:14px"><summary style="cursor:pointer;font-size:12.5px;color:var(--navy-2);font-weight:700">+ Agregar detalle o fotos (opcional)</summary>
       <textarea class="pi" rows="3" style="margin-top:8px" oninput="cxForm.desc=this.value" placeholder="Detalle del trabajo">${esc(f.desc)}</textarea>
       <label class="drop" style="margin-top:8px">📷 Fotos de referencia<input type="file" accept="image/*" multiple style="display:none" onchange="cxAddFotos(this)"></label>
@@ -2000,26 +2089,39 @@ function renderCxNueva(){
 async function cxAddFotos(input){const fs=[...input.files];input.value='';for(const f of fs){const d=await pdaComprimir(f,900,.68);if(d)cxForm.fotos.push(d);}renderCxNueva();}
 function cxGuardar(){
   const f=cxForm;
-  if(!f.titulo.trim()||!f.sector.trim()){alert('Completá qué hay que hacer y dónde.');return;}
+  if(!f.sector.trim()){alert('Completá dónde es el trabajo.');return;}
   if(!f.tipo){alert('Elegí si es reparación o trabajo nuevo.');return;}
-  if(!f.cts.length){alert('Elegí quién lo hace.');return;}
   if(!f.plazo||!f.fecha){alert('Elegí un plazo.');return;}
   if(f.fecha<pdHoy()){alert('La fecha límite no puede ser pasada.');return;}
-  let comp=f.fecha;if(pdNoLab(comp)){const n=pdSigLab(comp);alert('Esa fecha cae domingo o feriado. La pasé al '+pdFmt(n)+'.');comp=n;}
-  const datos={titulo:f.titulo.trim(),sector:f.sector.trim(),desc:(f.desc||'').trim()||f.titulo.trim(),tipo:f.tipo,impl:[...f.impl],contratistas:[...f.cts],plazo:f.plazo,compromiso:comp,prio:otPrioDe(comp)};
-  let o=f.editId?otPorId(f.editId):null;
-  if(o){Object.assign(o,datos);o.estado='pend_hab';o.rechazo=null;if(f.fotos.length){o.ev=o.ev||{};o.ev.ref=[...(o.ev.ref||[]),...f.fotos];}otLog(o,'Corregida y reenviada a Depósito');}
-  else{o=Object.assign({id:otNuevoId(),creada:pdHoy(),creadaPor:otActor().nombre,estado:'pend_hab',ev:{ref:[...f.fotos],antes:[],despues:[],extra:[]},hist:[]},datos);OT.ots.push(o);otLog(o,'Orden creada y enviada a habilitación');}
-  const t=otTarea(o);cxForm=cxVacio();otSave();
-  alert('Orden '+o.id+' enviada al Jefe de Depósito.'+(t.pts.length?'\nCuando la habilite se le pide a S&H: '+t.pts.map(p=>p.t).join(' + ')+'.':'\nNo requiere permisos críticos: al habilitarla queda autorizada.'));
+  for(let i=0;i<f.tareas.length;i++){
+    const t=f.tareas[i],n='Tarea '+(i+1)+': ';
+    if(!t.titulo.trim()){alert(n+'escribí qué hay que hacer.');return;}
+    if(!t.rubro){alert(n+'elegí el rubro.');return;}
+    if(!t.cts.length){alert(n+'elegí quién lo hace.');return;}
+    if(t.cts.some(c=>!rubrosDe(c).includes(t.rubro))){alert(n+'alguno de los elegidos no está habilitado para ese rubro.');return;}
+  }
+  let comp=f.fecha;if(pdNoLab(comp)){const nn=pdSigLab(comp);alert('Esa fecha cae domingo o feriado. La pasé al '+pdFmt(nn)+'.');comp=nn;}
+  const a=otActor(),uid=(INT.user&&INT.user.id)||PERFIL;
+  const grupo=f.tareas.length>1?('G-'+Math.random().toString(36).slice(2,7).toUpperCase()):'';
+  const creadas=[];
+  f.tareas.forEach((t,i)=>{
+    const datos={titulo:t.titulo.trim(),sector:f.sector.trim(),desc:(f.desc||'').trim()||t.titulo.trim(),tipo:f.tipo,rubro:t.rubro,impl:[...t.impl],contratistas:[...t.cts],plazo:f.plazo,compromiso:comp,prio:otPrioDe(comp),grupo,grupoN:i+1,grupoT:f.tareas.length};
+    let o=(f.editId&&i===0)?otPorId(f.editId):null;
+    if(o){Object.assign(o,datos);o.estado='pend_hab';o.rechazo=null;if(f.fotos.length){o.ev=o.ev||{};o.ev.ref=[...(o.ev.ref||[]),...f.fotos];}otLog(o,'Corregida y reenviada a Depósito');}
+    else{o=Object.assign({id:otNuevoId(),creada:pdHoy(),creadaPor:a.nombre,creadaRol:a.rol,creadaId:uid,estado:'pend_hab',ev:{ref:[...f.fotos],antes:[],despues:[],extra:[]},hist:[]},datos);OT.ots.push(o);otLog(o,'Orden creada y enviada a habilitación'+(grupo?' (tarea '+(i+1)+' de '+f.tareas.length+')':''));}
+    creadas.push(o);
+  });
+  cxForm=cxVacio();otSave();
+  alert(creadas.length===1?('Orden '+creadas[0].id+' enviada al Jefe de Depósito.'):(creadas.length+' órdenes enviadas al Jefe de Depósito (una por rubro): '+creadas.map(o=>o.id).join(', ')+'.'));
   show('cx-mis',document.querySelector('nav.tabs button[data-v="cx-mis"]'));
 }
 function renderCxMis(){
   const box=document.getElementById('cxMisRoot');if(!box)return;
-  const l=[...OT.ots].sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const mio=o=>PERFIL!=='lider'||o.creadaId===(INT.user&&INT.user.id);
+  const l=OT.ots.filter(mio).sort((a,b)=>(b.ts||0)-(a.ts||0));
   box.innerHTML=intHeader()+otSyncBar()+(l.map(o=>otCard(o,`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${o.estado==='rechazada'?`<button class="pbtn g" onclick="cxEditar('${o.id}')">Corregir y reenviar</button>`:''}${['pend_hab','rechazada','habilitada'].includes(o.estado)?`<button class="pbtn r" onclick="otCancelar('${o.id}')">Cancelar orden</button>`:''}${otAvisarBtn(o)}</div>`)).join('')||'<div class="card" style="font-size:13px;color:var(--muted)">Todavía no cargaste órdenes.</div>');
 }
-function cxEditar(id){const o=otPorId(id);cxForm={fotos:[],editId:id,titulo:o.titulo,sector:o.sector,desc:o.desc===o.titulo?'':o.desc,tipo:o.tipo,impl:[...(o.impl||[])],cts:[...o.contratistas],plazo:o.plazo||'otro',fecha:o.compromiso};show('cx-nueva',document.querySelector('nav.tabs button[data-v="cx-nueva"]'));}
+function cxEditar(id){const o=otPorId(id);cxForm={fotos:[],editId:id,sector:o.sector,desc:o.desc===o.titulo?'':o.desc,tipo:o.tipo,plazo:o.plazo||'otro',fecha:o.compromiso,tareas:[{titulo:o.titulo,rubro:o.rubro||'',impl:[...(o.impl||[])],cts:[...o.contratistas]}]};show('cx-nueva',document.querySelector('nav.tabs button[data-v="cx-nueva"]'));}
 function otCancelar(id){const o=otPorId(id);if(!o)return;const m=prompt('Motivo de la cancelación:');if(!m)return;o.estado='cancelada';otLog(o,'Orden cancelada',m);otSave();otRefresh();}
 
 /* ============ JEFE DE DEPÓSITO ============ */
@@ -2047,6 +2149,27 @@ function dpRechazar(id){
   if(!obs){alert('Escribí el motivo del rechazo en el campo de observaciones.');return;}
   o.rechazo={por:otActor().nombre,obs,fecha:pdHoy()};o.estado='rechazada';otLog(o,'Orden rechazada',obs);otSave();otRefresh();
 }
+function renderDpOk(){
+  const box=document.getElementById('dpOkRoot');if(!box)return;
+  const l=OT.ots.filter(o=>o.estado==='finalizada').sort((a,b)=>(a.fechaFin||'').localeCompare(b.fechaFin||''));
+  box.innerHTML=intHeader()+otSyncBar()+(l.map(o=>{const t=otTarea(o);return otCard(o,`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:12px">
+      <div class="k">Lo que se planteó</div><div style="font-size:13px;margin:4px 0 10px"><b>${esc(o.titulo)}</b> — ${esc(o.desc)}<br><span style="color:var(--muted);font-size:12px">Sector: ${esc(o.sector)} · Implica: ${esc(t.n)}${o.habil&&o.habil.obs?' · Condiciones que pusiste: '+esc(o.habil.obs):''}</span></div>
+      <div style="font-size:12px;color:var(--muted)">Mirá las fotos del antes y del después de arriba y, si hace falta, verificalo en el lugar.</div>
+      <div class="pk">Observación (obligatoria si no estás conforme)</div><textarea class="pi" id="dpK_${o.id}" rows="2" placeholder="Ej.: quedó como se pidió / falta tapar la caja"></textarea>
+      <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-gold" style="flex:none;padding:9px 22px" onclick="dpConforme('${o.id}')">✓ Conforme: se hizo como se planteó</button><button class="btn btn-ghost" style="flex:none;padding:9px 22px;color:var(--bad);border-color:var(--bad)" onclick="dpNoConforme('${o.id}')">✕ No conforme: devolver al contratista</button></div></div>`);}).join('')||'<div class="card" style="font-size:13px;color:var(--muted)">No hay trabajos terminados esperando tu OK.</div>');
+}
+function dpConforme(id){
+  const o=otPorId(id);if(!o||o.estado!=='finalizada')return;
+  const obs=((document.getElementById('dpK_'+id)||{}).value||'').trim();
+  if(!(o.ev.despues||[]).length){alert('La orden no tiene fotos del después.');return;}
+  o.conforme={por:otActor().nombre,fecha:pdHoy(),obs};o.estado='conforme';otLog(o,'OK del Depósito: se hizo como se planteó',obs);otSave();otRefresh();
+}
+function dpNoConforme(id){
+  const o=otPorId(id);if(!o||o.estado!=='finalizada')return;
+  const obs=((document.getElementById('dpK_'+id)||{}).value||'').trim();
+  if(!obs){alert('Escribí qué falta o qué no quedó como se planteó.');return;}
+  o.estado='en_ejec';otLog(o,'Depósito no conforme: devuelta al contratista',obs);otSave();otRefresh();
+}
 function renderDpSeg(){
   const box=document.getElementById('dpSegRoot');if(!box)return;
   const l=OT.ots.filter(o=>o.estado!=='pend_hab').sort((a,b)=>(b.ts||0)-(a.ts||0));
@@ -2056,11 +2179,13 @@ function renderDpSeg(){
 /* ============ SEGURIDAD E HIGIENE ============ */
 function otValida(o){
   const t=otTarea(o);const items=[];
-  const req=[...new Set([...(t.caps||[]),...Object.keys(CAPDEF).filter(k=>CAPDEF[k].base)])];
+  const req=otReqCaps(o);
   o.contratistas.forEach(cid=>{
     const c=CONTRACTORS[cid];const s=c&&c.seguro;
     if(!s)items.push({ok:false,txt:pdPila(cid)+': sin seguro cargado'});
     else{const st=polizaStatus(s.hasta);items.push({ok:st.txt!=='Vencida',txt:pdPila(cid)+': seguro '+st.txt.toLowerCase()+' (hasta '+fmt(new Date(s.hasta+'T12:00:00'))+')'});}
+    if(o.rubro&&RUBROS[o.rubro]){const okR=rubrosDe(cid).includes(o.rubro);items.push({ok:okR,txt:pdPila(cid)+': '+(okR?'habilitado para '+RUBROS[o.rubro].n+' según su cobertura':'NO está habilitado para '+RUBROS[o.rubro].n+' según su cobertura. Reasignar esta tarea a quien corresponda.')});}
+    req.forEach(k=>otCapEnsure(cid,k));
     const mal=req.filter(k=>{const iso=capDates[cid]&&capDates[cid][k];if(!iso)return true;const st=capStatus(iso);return !(st.txt==='Al día'||st.txt==='Por vencer');});
     items.push({ok:!mal.length,txt:pdPila(cid)+': capacitaciones '+(mal.length?'con faltantes — '+mal.map(capName).join(', '):'al día ('+req.length+')')});
   });
@@ -2075,41 +2200,59 @@ function otEmitirPT(id){
   if(!v.ok){alert('No se puede emitir: hay seguro o capacitaciones sin cumplir. Revisá el detalle.');return;}
   o.pt={fecha:pdHoy(),por:'Eduardo Díaz — Referente S&H'};o.estado='pt_emitido';otLog(o,'Permiso de trabajo emitido');otSave();otRefresh();
 }
-function otCerrar(id){const o=otPorId(id);if(!o)return;if(!(o.ev.despues||[]).length){alert('La orden no tiene evidencia del después.');return;}o.estado='cerrada';o.fechaCierre=pdHoy();otLog(o,'Orden cerrada',(document.getElementById('shO_'+id)||{}).value||'');otSave();otRefresh();}
+function otCerrar(id){const o=otPorId(id);if(!o)return;if(o.estado!=='conforme'){alert('Todavía falta el OK del Jefe de Depósito: tiene que confirmar que el trabajo se hizo como se planteó.');return;}if(!(o.ev.despues||[]).length){alert('La orden no tiene evidencia del después.');return;}o.estado='cerrada';o.fechaCierre=pdHoy();otLog(o,'Orden cerrada',(document.getElementById('shO_'+id)||{}).value||'');otSave();otRefresh();}
 function otDevolver(id){const o=otPorId(id);if(!o)return;const obs=((document.getElementById('shO_'+id)||{}).value||'').trim();if(!obs){alert('Escribí qué hay que corregir o completar.');return;}o.estado='en_ejec';otLog(o,'Devuelta al contratista',obs);otSave();otRefresh();}
 function otAlertas(){
   const l=[];
   OT.ots.forEach(o=>{
     if(o.estado==='pend_hab'&&pdDias(o.creada)<=-2)l.push({o,txt:'Esperando habilitación del Jefe de Depósito hace '+(-pdDias(o.creada))+' días'});
     if(o.estado==='habilitada')l.push({o,txt:'PT solicitado: '+(otTarea(o).pts.map(p=>p.t).join(' + ')||'autorización')+' — falta emitir'});
-    if(o.estado==='finalizada')l.push({o,txt:'Finalizada: falta revisar evidencia y cerrar'});
-    if(o.compromiso&&!['cerrada','cancelada','finalizada'].includes(o.estado)&&pdDias(o.compromiso)<0)l.push({o,txt:'Vencida desde el '+pdFmt(o.compromiso)});
+    if(o.estado==='finalizada')l.push({o,txt:'Finalizada: falta el OK del Jefe de Depósito'});
+    if(o.estado==='conforme')l.push({o,txt:'Con OK del Depósito: falta revisar y cerrar'});
+    if(o.compromiso&&!['cerrada','cancelada','finalizada','conforme'].includes(o.estado)&&pdDias(o.compromiso)<0)l.push({o,txt:'Vencida desde el '+pdFmt(o.compromiso)});
     if(o.fechaFin&&o.compromiso&&o.fechaFin>o.compromiso&&o.estado!=='cerrada')l.push({o,txt:'Se terminó fuera de fecha ('+pdFmt(o.fechaFin)+')'});
   });
   return l;
 }
+let LEADERS=null;
+function leadersHTML(){
+  if(!SYNC.url||SYNC.rol!=='syh')return '<div style="font-size:12.5px;color:var(--muted)">Ingresá como Seguridad e Higiene con conexión para ver y dar de alta líderes.</div>';
+  if(LEADERS===null){leadersCargar();return '<div style="font-size:12.5px;color:var(--muted)">Cargando…</div>';}
+  return (LEADERS.length?LEADERS.map(u=>`<div style="font-size:12.5px;display:flex;gap:10px;align-items:center;margin:3px 0"><span style="flex:1"><b>${esc(u.nombre)}</b>${u.sector?' · '+esc(u.sector):''}</span><button class="pbtn r" onclick="leaderBaja('${u.id}')">Dar de baja</button></div>`).join(''):'<div style="font-size:12.5px;color:var(--muted)">Todavía no hay líderes cargados.</div>')
+   +`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><input class="pi" id="ldN" placeholder="Nombre y apellido" style="flex:2;min-width:150px"><input class="pi" id="ldS" placeholder="Sector (opcional)" style="flex:1;min-width:110px"><input class="pi" id="ldP" type="password" inputmode="numeric" autocomplete="off" placeholder="Contraseña (DNI)" style="flex:1;min-width:110px"><button class="pbtn g" onclick="leaderAlta()">Agregar</button></div><div style="font-size:11px;color:var(--muted);margin-top:4px">La contraseña es el DNI, solo números. Se guarda cifrada, nadie la puede ver después.</div>`;
+}
+async function leadersCargar(){if(!SYNC.url||!SYNC.token||SYNC.rol!=='syh')return;try{const d=await srvCall({a:'users',t:SYNC.token});if(d&&d.users){LEADERS=d.users;renderOTs();}}catch(e){}}
+async function leaderAlta(){
+  const n=(document.getElementById('ldN').value||'').trim(),sec=(document.getElementById('ldS').value||'').trim(),pw=(document.getElementById('ldP').value||'').replace(/\D/g,'');
+  if(!n){alert('Escribí el nombre.');return;}if(pw.length<6){alert('La contraseña (DNI) tiene que tener al menos 6 números.');return;}
+  try{const d=await srvCall({a:'user_add',t:SYNC.token,nombre:n,sector:sec,h:bkHash(pw)});
+    if(d&&d.error){alert(d.error==='repetida'?'Esa contraseña ya la usa otra persona.':('No se pudo: '+d.error));return;}
+    LEADERS=d.users;renderOTs();alert(n+' ya puede entrar como Líder de sector con su contraseña.');}catch(e){alert('No pude conectar con el servidor.');}
+}
+async function leaderBaja(id){if(!confirm('¿Dar de baja a esta persona? Ya no va a poder entrar.'))return;try{const d=await srvCall({a:'user_del',t:SYNC.token,id});if(d&&d.users){LEADERS=d.users;renderOTs();}else alert('No se pudo: '+((d&&d.error)||''));}catch(e){alert('No pude conectar con el servidor.');}}
+function rubroSet(cid,k,on){const a=new Set(rubrosDe(cid));if(on)a.add(k);else a.delete(k);PDA.rubros=PDA.rubros||{};PDA.rubros[cid]=[...a];pdaSave();}
 function renderOTs(){
   const box=document.getElementById('otsRoot');if(!box)return;
   const c=k=>OT.ots.filter(o=>o.estado===k).length;
   const al=otAlertas();
   const sec=(titulo,lista,fn)=>lista.length?`<h3 class="sec" style="font-size:17px;margin:22px 0 12px">${titulo} (${lista.length})</h3>${lista.map(fn).join('')}`:'';
   const hab=OT.ots.filter(o=>o.estado==='habilitada');
-  const fin=OT.ots.filter(o=>o.estado==='finalizada');
-  const curso=OT.ots.filter(o=>['pt_emitido','en_ejec'].includes(o.estado));
+  const fin=OT.ots.filter(o=>o.estado==='conforme');
+  const curso=OT.ots.filter(o=>['pt_emitido','en_ejec','finalizada'].includes(o.estado));
   const pend=OT.ots.filter(o=>['pend_hab','rechazada'].includes(o.estado));
   const hechas=OT.ots.filter(o=>['cerrada','cancelada'].includes(o.estado));
   box.innerHTML=otSyncBar()+`
     <div class="card"><div class="kpis">
       <div class="kpi"><div class="num" style="color:var(--warn)">${c('pend_hab')}</div><div class="lbl">Esperan habilitación</div></div>
       <div class="kpi"><div class="num" style="color:var(--warn)">${c('habilitada')}</div><div class="lbl">Para emitir PT</div></div>
-      <div class="kpi"><div class="num">${c('pt_emitido')+c('en_ejec')}</div><div class="lbl">En curso</div></div>
-      <div class="kpi"><div class="num" style="color:var(--warn)">${c('finalizada')}</div><div class="lbl">Para revisar y cerrar</div></div>
+      <div class="kpi"><div class="num">${c('pt_emitido')+c('en_ejec')+c('finalizada')}</div><div class="lbl">En curso (incl. esperan OK Depósito)</div></div>
+      <div class="kpi"><div class="num" style="color:var(--warn)">${c('conforme')}</div><div class="lbl">Con OK: para cerrar</div></div>
       <div class="kpi"><div class="num" style="color:var(--ok)">${c('cerrada')}</div><div class="lbl">Cerradas</div></div>
       <div class="kpi"><div class="num" style="color:var(--bad)">${al.filter(a=>/Vencida|fuera de fecha/.test(a.txt)).length}</div><div class="lbl">Vencidas / fuera de fecha</div></div></div></div>
     ${al.length?`<div class="card"><div class="k">Alertas</div>${al.map(a=>`<div class="miniwork"><div style="flex:1"><b>${a.o.id}</b> — ${esc(a.o.titulo)}<div style="font-size:11px;color:var(--muted)">${esc(a.txt)}</div></div></div>`).join('')}</div>`:''}
     ${sec('Habilitadas — permisos solicitados a S&H',hab,o=>{const v=otValida(o);return otCard(o,`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px"><div class="k">Validación antes de emitir</div>${v.items.map(i=>`<div style="font-size:12.5px;padding:3px 0;color:${i.ok?'var(--ok)':'var(--bad)'}">${i.ok?'✓':'✕'} ${esc(i.txt)}</div>`).join('')}
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-gold" style="flex:none;padding:9px 22px;${v.ok?'':'opacity:.45'}" onclick="otEmitirPT('${o.id}')">Emitir permiso de trabajo</button>${otAvisarBtn(o)}</div></div>`);})}
-    ${sec('Finalizadas — revisar evidencia',fin,o=>otCard(o,`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px"><div class="pk">Observación (obligatoria si la devolvés)</div><textarea class="pi" id="shO_${o.id}" rows="2"></textarea>
+    ${sec('Con OK del Depósito — revisar evidencia y cerrar',fin,o=>otCard(o,`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px"><div class="pk">Observación (obligatoria si la devolvés)</div><textarea class="pi" id="shO_${o.id}" rows="2"></textarea>
         <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn btn-gold" style="flex:none;padding:9px 22px" onclick="otCerrar('${o.id}')">✓ Cerrar orden</button><button class="btn btn-ghost" style="flex:none;padding:9px 22px" onclick="otDevolver('${o.id}')">Devolver al contratista</button><button class="pbtn" onclick="openOTPT('${o.id}')">Ver PT</button></div></div>`))}
     ${sec('En curso',curso,o=>otCard(o,`<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="pbtn" onclick="openOTPT('${o.id}')">Ver / imprimir PT</button>${otAvisarBtn(o)}</div>`))}
     ${sec('Pendientes de habilitación o rechazadas',pend,o=>otCard(o,`<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">${otAvisarBtn(o)}${['pend_hab','rechazada'].includes(o.estado)?`<button class="pbtn r" onclick="otCancelar('${o.id}')">Cancelar</button>`:''}</div>`))}
@@ -2118,6 +2261,9 @@ function renderOTs(){
     <div class="card" style="margin-top:22px"><div class="k">Actuar en reemplazo</div><div style="font-size:12.5px;color:var(--muted);margin:4px 0 10px">Para cargar o habilitar una orden cuando la persona no está. Queda registrado como “por S&amp;H” en el historial.</div>
       <button class="pbtn g" onclick="actuarComo('capex')">Actuar como Líder de Capex</button> <button class="pbtn g" onclick="actuarComo('deposito')">Actuar como Jefe de Depósito</button>
       <div class="pk" style="margin-top:14px">Usuarios internos habilitados</div>${USUARIOS_INT.length?USUARIOS_INT.map(u=>`<div style="font-size:12.5px">${OT_ROL[u.rol]}: <b>${esc(u.nombre)}</b></div>`).join(''):'<div style="font-size:12.5px;color:var(--bad)">Ninguno cargado todavía. Sin usuarios, el Líder de Capex y el Jefe de Depósito no pueden entrar (se cargan en el archivo con nombre y DNI).</div>'}
+      <div class="pk" style="margin-top:14px">Líderes de sector habilitados</div>${leadersHTML()}
+      <div class="pk" style="margin-top:14px">Rubros que cubre cada contratista (según su certificado)</div>${Object.keys(CONTRACTORS).map(cid=>`<div style="font-size:12.5px;margin:6px 0"><b>${esc(pdCname(cid))}</b><div class="selrow" style="margin-top:4px">${Object.keys(RUBROS).map(k=>`<label style="display:inline-flex;gap:5px;align-items:center;margin-right:12px;font-size:12px"><input type="checkbox" ${rubrosDe(cid).includes(k)?'checked':''} onchange="rubroSet('${cid}','${k}',this.checked)"> ${RUBROS[k].n}</label>`).join('')}</div></div>`).join('')}
+      <div style="font-size:11.5px;color:var(--muted)">Una tarea solo puede asignarse a quien cubra su rubro. Ajustalo si el certificado o la productora confirman otra cosa.</div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:10px">Sincronización entre dispositivos: ${SYNC.url?'activa':'no configurada (se usan paquetes)'}.</div></div>`;
 }
 
@@ -2126,15 +2272,15 @@ function openOTPT(id){
   const o=otPorId(id);if(!o)return;const t=otTarea(o);
   document.getElementById('mTitle').textContent='Permiso de trabajo — '+o.id;
   document.getElementById('mRetro').style.display='none';document.querySelector('#modalBg .mfoot').style.display='';
-  const req=[...new Set([...(t.caps||[]),...Object.keys(CAPDEF).filter(k=>CAPDEF[k].base)])];
-  const caps=req.map(k=>`<li>${capName(k)} <span style="color:var(--muted);font-size:12px">— ${o.contratistas.map(cid=>{const iso=capDates[cid]&&capDates[cid][k];return iso?CONTRACTORS[cid].av+': '+capStatus(iso).txt+' (vence '+fmt(addYear(iso))+')':CONTRACTORS[cid].av+': no registrada';}).join(' · ')}</span></li>`).join('');
+  const req=otReqCaps(o);
+  const caps=req.map(k=>`<li>${capName(k)} <span style="color:var(--muted);font-size:12px">— ${o.contratistas.map(cid=>{const iso=capDates[cid]&&capDates[cid][k];return iso?CONTRACTORS[cid].av+': '+capStatus(iso).txt+' · realizada el '+fmt(new Date(iso+'T12:00:00'))+' · vence '+fmt(addYear(iso)):CONTRACTORS[cid].av+': no registrada';}).join(' · ')}</span></li>`).join('');
   const seg=o.contratistas.map(cid=>{const s=CONTRACTORS[cid].seguro;if(!s)return '';const st=polizaStatus(s.hasta);return `${CONTRACTORS[cid].av}: ${s.cia} — póliza ${s.poliza}, ${s.actividad}, vigente hasta ${fmt(new Date(s.hasta+'T12:00:00'))} (${st.txt}). ${s.exclusiones||''}`;}).join('<br>');
   document.getElementById('mBody').innerHTML=`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px 22px">
     <div style="display:flex;justify-content:space-between;border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px"><div><b style="font-size:15px;color:var(--navy)">Beccacece Hnos. S.A.</b><div style="font-size:11px;color:var(--muted)">Permiso de trabajo — Gestión de contratistas (SOP 13)</div></div>
       <div style="text-align:right;font-size:12px"><b>${o.id}</b><div>${o.pt?'Emitido el '+pdFmt(o.pt.fecha):'<span style="color:var(--warn)">Aún no emitido</span>'}</div></div></div>
     <div style="margin-bottom:13px"><div class="k">Permisos</div><div>${t.pts.map(p=>`<span class="pt ${p.c}" style="margin-right:6px">${p.t}</span>`).join('')||'—'}</div></div>
-    <div style="margin-bottom:13px"><div class="k">Trabajo</div><div style="font-size:13px;line-height:1.5"><b>${esc(o.titulo)}</b> (${OT_TIPOS[o.tipo]}) — ${esc(o.desc)}<br>Sector: ${esc(o.sector)} · Implica: ${esc(t.n)} · Prioridad ${esc(o.prio)} · Plazo ${esc(otPlazoN(o))} (${pdFmt(o.compromiso)})</div></div>
-    <div style="margin-bottom:13px"><div class="k">Orden y habilitación</div><div style="font-size:13px;line-height:1.5">Pedida por ${esc(o.creadaPor)} (Líder de Capex) el ${pdFmt(o.creada)}.${o.habil?`<br>Habilitada por ${esc(o.habil.por)} (Jefe de Depósito) el ${pdFmt(o.habil.fecha)} · ejecución del ${pdFmt(o.habil.desde)} al ${pdFmt(o.habil.hasta)}.${o.habil.obs?'<br>Condiciones: '+esc(o.habil.obs):''}`:''}</div></div>
+    <div style="margin-bottom:13px"><div class="k">Trabajo</div><div style="font-size:13px;line-height:1.5"><b>${esc(o.titulo)}</b> (${OT_TIPOS[o.tipo]}) — ${esc(o.desc)}<br>Sector: ${esc(o.sector)} · ${o.rubro&&RUBROS[o.rubro]?'Rubro: '+RUBROS[o.rubro].n+' · ':''}Implica: ${esc(t.n)} · Prioridad ${esc(o.prio)} · Plazo ${esc(otPlazoN(o))} (${pdFmt(o.compromiso)})</div></div>
+    <div style="margin-bottom:13px"><div class="k">Orden y habilitación</div><div style="font-size:13px;line-height:1.5">Pedida por ${esc(o.creadaPor)} (${esc(o.creadaRol||'Líder de Capex')}) el ${pdFmt(o.creada)}.${o.habil?`<br>Habilitada por ${esc(o.habil.por)} (Jefe de Depósito) el ${pdFmt(o.habil.fecha)} · ejecución del ${pdFmt(o.habil.desde)} al ${pdFmt(o.habil.hasta)}.${o.habil.obs?'<br>Condiciones: '+esc(o.habil.obs):''}`:''}${o.conforme?`<br>Trabajo terminado y conforme: OK de ${esc(o.conforme.por)} (Jefe de Depósito) el ${pdFmt(o.conforme.fecha)}${o.conforme.obs?' · '+esc(o.conforme.obs):''}.`:''}</div></div>
     <div style="margin-bottom:13px"><div class="k">Contratista(s)</div><div style="font-size:13px">${o.contratistas.map(pdCname).join(', ')}</div></div>
     <div style="margin-bottom:13px"><div class="k">Cobertura de seguro</div><div style="font-size:12.5px;line-height:1.5">${seg}</div></div>
     ${segAlturaBlock(o.contratistas,t.pts)}
@@ -2149,7 +2295,7 @@ function openOTPT(id){
 }
 
 /* ============ CONTRATISTA: Mis órdenes ============ */
-function otMias(cid){return OT.ots.filter(o=>o.contratistas.includes(cid)&&['habilitada','pt_emitido','en_ejec','finalizada','cerrada'].includes(o.estado));}
+function otMias(cid){return OT.ots.filter(o=>o.contratistas.includes(cid)&&['habilitada','pt_emitido','en_ejec','finalizada','conforme','cerrada'].includes(o.estado));}
 function otBanner(cid){
   const l=OT.ots.filter(o=>o.contratistas.includes(cid)&&['pt_emitido','en_ejec'].includes(o.estado));
   if(!l.length)return '';
@@ -2169,10 +2315,16 @@ function viewOrdenes(){
     if(o.estado==='en_ejec')acc=`<div class="pk">${o.tipo==='nuevo'?'Evidencia del trabajo nuevo terminado':'Fotos del DESPUÉS'} (obligatorias)</div>${up('despues',o.tipo==='nuevo'?'Subir fotos del trabajo nuevo':'Subir fotos del después')}
       <div class="pk">Comentario final (opcional)</div><textarea class="pi" id="otCom_${o.id}" rows="2"></textarea>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="pbtn g" onclick="otFinalizar('${o.id}')">✔ Finalizar trabajo</button><button class="pbtn" onclick="openOTPT('${o.id}')">Ver PT</button></div>`;
-    if(o.estado==='finalizada'||o.estado==='cerrada')acc=`<div class="info-note" style="background:${o.estado==='cerrada'?'var(--ok-bg)':'var(--warn-bg)'};border-color:var(--line);color:${o.estado==='cerrada'?'var(--ok)':'var(--warn)'};margin-top:10px;font-size:12px">${o.estado==='cerrada'?'Orden cerrada por Seguridad e Higiene.':'Enviada. Seguridad e Higiene está revisando la evidencia.'} Si tenés más fotos, podés sumarlas.</div>${up('extra','Subir evidencia adicional')}`;
+    if(['finalizada','conforme','cerrada'].includes(o.estado))acc=`<div class="info-note" style="background:${o.estado==='cerrada'?'var(--ok-bg)':'var(--warn-bg)'};border-color:var(--line);color:${o.estado==='cerrada'?'var(--ok)':'var(--warn)'};margin-top:10px;font-size:12px">${o.estado==='cerrada'?'Orden cerrada por Seguridad e Higiene.':(o.estado==='conforme'?'El Jefe de Depósito dio el OK. Seguridad e Higiene hace el cierre.':'Enviada. El Jefe de Depósito verifica que se hizo como se planteó.')} Si tenés más fotos, podés sumarlas.</div>${up('extra','Subir evidencia adicional')}`;
+    if(['habilitada','pt_emitido'].includes(o.estado))acc=otCapsBloque(o,cid)+acc;
     const borrar=o.estado==='pt_emitido'?'antes':o.estado==='en_ejec'?'despues':null;
     return otCard(o,acc,{borrar});
   }).join('');
+}
+function otCapsBloque(o,cid){
+  const f=otReqCaps(o).map(k=>{otCapEnsure(cid,k);const r=capReg[cid][k],iso=r.fecha,st=iso?capStatus(iso):null,ok=!!st&&(st.txt==='Al día'||st.txt==='Por vencer');
+    return `<div class="miniwork" style="align-items:center"><div style="flex:1;font-size:12.5px"><span style="color:${ok?'var(--ok)':'var(--bad)'};font-weight:700">${ok?'✓':'✕'}</span> ${capName(k)}<div style="font-size:11px;color:var(--muted)">${iso?'Realizada el '+fmt(new Date(iso+'T12:00:00'))+' · '+st.txt.toLowerCase():'Sin registrar'}</div></div>${ok?'':(QUIZ[k]?`<button class="btn btn-gold" style="flex:none;padding:6px 14px;font-size:12px" onclick="ctRendir('${k}')">Realizar</button>`:'<span style="font-size:11px;color:var(--muted)">La da Seguridad e Higiene</span>')}</div>`;}).join('');
+  return `<div class="pk">Capacitaciones que exige este trabajo</div>${f}`;
 }
 function otIniciar(id){
   const o=otPorId(id);if(!o)return;
@@ -2191,12 +2343,12 @@ function otFinalizar(id){
 function renderOtTablero(){
   const box=document.getElementById('otTablero');if(!box)return;
   const al=otAlertas();const c=k=>OT.ots.filter(o=>o.estado===k).length;
-  box.innerHTML=`<div class="card" style="border-left:5px solid ${al.length?'var(--warn)':'var(--gold)'}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><div class="k">Órdenes de trabajo</div><div style="font-size:13px;margin-top:4px">${c('pend_hab')} esperan habilitación · <b>${c('habilitada')} para emitir PT</b> · ${c('pt_emitido')+c('en_ejec')} en curso · <b>${c('finalizada')} para cerrar</b></div></div><button class="pbtn g" onclick="document.querySelector('nav.tabs button[data-v=&quot;ots&quot;]').click()">Abrir</button></div></div>`;
+  box.innerHTML=`<div class="card" style="border-left:5px solid ${al.length?'var(--warn)':'var(--gold)'}"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><div class="k">Órdenes de trabajo</div><div style="font-size:13px;margin-top:4px">${c('pend_hab')} esperan habilitación · <b>${c('habilitada')} para emitir PT</b> · ${c('pt_emitido')+c('en_ejec')} en curso · <b>${c('conforme')} para cerrar</b> · ${c('finalizada')} esperan el OK del Depósito</div></div><button class="pbtn g" onclick="document.querySelector('nav.tabs button[data-v=&quot;ots&quot;]').click()">Abrir</button></div></div>`;
 }
 
 /* ---- refresco general ---- */
 function otRefresh(){
-  if(typeof renderOTs==='function'){renderOTs();renderCxNueva();renderCxMis();renderDpHab();renderDpSeg();renderOtTablero();}
+  if(typeof renderOTs==='function'){renderOTs();renderCxNueva();renderCxMis();renderDpHab();renderDpOk();renderDpSeg();renderOtTablero();}
   if(PERFIL==='contratista'&&ct.loged)renderWizard();
 }
 otRefresh();
