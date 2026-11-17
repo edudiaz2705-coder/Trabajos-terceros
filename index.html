@@ -429,11 +429,14 @@ const PLANILLAS = {};
 /* ---- registro de capacitaciones: se guarda en el dispositivo y se sincroniza ---- */
 const CAPS_KEY='bk_terceros_caps_v1';
 let CAPS_META={lastPush:0,seeded:false};
-function capBlank(){return{fecha:'',presente:false,nota:null,okRef:false,okLic:false,firmas:[]};}
+function capBlank(){return{fecha:'',presente:false,nota:null,okRef:false,okLic:false,firmas:[],fe:null,lic:''};}
+/* Firma: hoja de firmas en papel escaneada O firma electronica del contratista dentro de la app */
+function capFirmaOk(r){return (r.firmas&&r.firmas.length>0)||!!r.fe;}
+function capCumplida(r,vig){return !!(r.presente&&r.nota!==null&&r.nota>=UMBRAL&&r.okRef&&r.okLic&&capFirmaOk(r)&&vig.txt!=='Vencida');}
 function capApply(cid,k,r){
   if(!capReg[cid])return;
   const cur=capReg[cid][k]||(capReg[cid][k]=capBlank());
-  cur.fecha=r.fecha||'';cur.presente=!!r.presente;cur.nota=(r.nota==null?null:r.nota);cur.okRef=!!r.okRef;cur.okLic=!!r.okLic;cur.firmas=Array.isArray(r.firmas)?r.firmas:[];cur.ts=r.ts||0;
+  cur.fecha=r.fecha||'';cur.presente=!!r.presente;cur.nota=(r.nota==null?null:r.nota);cur.okRef=!!r.okRef;cur.okLic=!!r.okLic;cur.firmas=Array.isArray(r.firmas)?r.firmas:[];cur.fe=r.fe||null;cur.lic=r.lic||'';cur.ts=r.ts||0;
   if(CONTRACTORS[cid]&&!CONTRACTORS[cid].caps.includes(k))CONTRACTORS[cid].caps.push(k);
 }
 function capsSave(){
@@ -869,7 +872,7 @@ function updateBoard(){
   Object.keys(capReg).forEach(cid=>Object.keys(capReg[cid]).forEach(k=>{
     capsTot++;
     const r=capReg[cid][k];
-    const cumplida = r.presente && r.nota!==null && r.nota>=UMBRAL && r.okRef && r.okLic && r.firmas.length>0 && (capStatus(r.fecha).txt!=="Vencida");
+    const cumplida = capCumplida(r,capStatus(r.fecha));
     if(cumplida)capsOk++;
   }));
   const pct=Math.round(complete/tot*100);
@@ -931,11 +934,11 @@ function renderContractors(){
     const works=DATA.filter(d=>d.resp.includes(cid)||(d.asis||[]).includes(cid));
     const capsRows=c.caps.map(k=>{
       const r=capReg[cid][k], vig=capStatus(r.fecha);
-      const cumplida = r.presente && r.nota!==null && r.nota>=UMBRAL && r.okRef && r.okLic && r.firmas.length>0 && (vig.txt!=="Vencida");
-      const lista = r.presente && r.nota!==null && r.nota>=UMBRAL && r.okRef && r.okLic && r.firmas.length===0 && (vig.txt!=="Vencida");
+      const cumplida = capCumplida(r,vig);
+      const lista = r.presente && r.nota!==null && r.nota>=UMBRAL && r.okRef && r.okLic && !capFirmaOk(r) && (vig.txt!=="Vencida");
       const estado = cumplida?{txt:"Cumplida",bg:"var(--ok-bg)",c:"var(--ok)"}
                     :(vig.txt==="Vencida"?{txt:"Vencida",bg:"var(--bad-bg)",c:"var(--bad)"}
-                    :(lista?{txt:"Falta firma real",bg:"var(--warn-bg)",c:"var(--warn)"}:{txt:"Incompleta",bg:"var(--warn-bg)",c:"var(--warn)"}));
+                    :(lista?{txt:"Falta firma",bg:"var(--warn-bg)",c:"var(--warn)"}:{txt:"Incompleta",bg:"var(--warn-bg)",c:"var(--warn)"}));
       const notaTxt = r.nota===null?'—':(r.nota+'%'+(r.nota>=UMBRAL?' ✓':' ✗'));
       return `<tr>
         <td><b>${capName(k)}</b><div style="font-size:10.5px;color:var(--muted)">vence ${fmt(addYear(r.fecha))}</div></td>
@@ -944,11 +947,11 @@ function renderContractors(){
         <td style="text-align:center;font-size:11.5px">${notaTxt}<br><button class="btn btn-ghost" style="flex:none;padding:3px 8px;font-size:10.5px;margin-top:3px" onclick="rendirExamen('${cid}','${k}')">Rendir</button></td>
         <td style="text-align:center;font-size:10.5px">
           <label style="display:block"><input type="checkbox" ${r.okRef?'checked':''} onchange="setCapField('${cid}','${k}','okRef',this.checked)"> Ref. S&amp;H</label>
-          <label style="display:block"><input type="checkbox" ${r.okLic?'checked':''} onchange="setCapField('${cid}','${k}','okLic',this.checked)"> Lic.</label>
+          <label style="display:block"><input type="checkbox" ${r.okLic?'checked':''} onchange="setCapLic('${cid}','${k}',this.checked)"> Lic.</label>${r.okLic&&r.lic?`<div style="color:var(--muted);font-size:9.5px;max-width:110px">${esc(r.lic)}</div>`:''}
         </td>
         <td style="text-align:center;font-size:10.5px">
           <label class="drop" style="padding:5px 6px;font-size:10px">📎 Firmas<input type="file" accept="application/pdf,image/*" multiple style="display:none" onchange="addFirmas('${cid}','${k}',this)"></label>
-          ${r.firmas.length?`<div style="color:var(--ok);margin-top:3px">✓ ${r.firmas.length}</div>`:''}${PLANILLAS[cid]?`<div style="margin-top:3px"><a href="#" onclick="verPlanilla('${cid}');return false" style="color:var(--navy-2);font-size:10px">Ver planilla</a></div>`:''}
+          ${r.firmas.length?`<div style="color:var(--ok);margin-top:3px">✓ ${r.firmas.length} en papel</div>`:''}${r.fe?`<div style="color:var(--ok);margin-top:3px">✓ Firma electrónica<br>${fmt(new Date(r.fe.ts))}</div>`:''}${PLANILLAS[cid]?`<div style="margin-top:3px"><a href="#" onclick="verPlanilla('${cid}');return false" style="color:var(--navy-2);font-size:10px">Ver planilla</a></div>`:''}
         </td>
         <td><span class="capstate" style="background:${estado.bg};color:${estado.c}">${estado.txt}</span></td></tr>`;
     }).join('');
@@ -977,6 +980,7 @@ function renderContractors(){
     wrap.appendChild(el);
   });
 }
+function setCapLic(cid,k,on){const r=capReg[cid][k];if(on){const n=(prompt('Nombre del licenciado que validó esta capacitación:')||'').trim();if(!n){renderContractors();return;}r.lic=n+' — '+fmt(new Date());r.okLic=true;}else{r.okLic=false;r.lic='';}capTouch(cid,k);renderContractors();updateBoard();}
 function setCapField(cid,k,campo,val){capReg[cid][k][campo]=val;capTouch(cid,k);renderContractors();updateBoard();}
 function addFirmas(cid,k,input){
   [...input.files].forEach(f=>capReg[cid][k].firmas.push(f.name));
@@ -1138,28 +1142,36 @@ function viewMisCaps(){
   const filas=CONTRACTORS[cid].caps.map(k=>{
     const r=capReg[cid][k], vig=capStatus(r.fecha), venc=addYear(r.fecha);
     const dias=Math.ceil((venc-new Date())/86400000);
-    const cumplida=r.presente&&r.nota!==null&&r.nota>=UMBRAL&&r.okRef&&r.okLic&&r.firmas.length>0&&vig.txt!=="Vencida";
+    const cumplida=capCumplida(r,vig);
     const aprobadoQuiz=r.nota!==null&&r.nota>=UMBRAL;
     let alerta='';
     if(!r.fecha) alerta=`<span style="color:var(--bad);font-weight:700">Sin registrar — realizar</span>`;
     else if(vig.txt==='Vencida') alerta=`<span style="color:var(--bad);font-weight:700">Vencida — rehacer</span>`;
     else if(dias<=30) alerta=`<span style="color:var(--warn);font-weight:700">Vence en ${dias} día${dias===1?'':'s'}</span>`;
     else alerta=`<span style="color:var(--muted)">Vence en ${dias} días</span>`;
-    const estado=cumplida?{t:'Cumplida',b:'var(--ok-bg)',c:'var(--ok)'}:(aprobadoQuiz?{t:'Quiz aprobado — falta firma',b:'var(--warn-bg)',c:'var(--warn)'}:{t:'Pendiente',b:'var(--bad-bg)',c:'var(--bad)'});
+    const estado=cumplida?{t:'Cumplida',b:'var(--ok-bg)',c:'var(--ok)'}:(aprobadoQuiz&&vig.txt!=='Vencida'?(capFirmaOk(r)?{t:'Firmada — falta validación de S&H',b:'var(--warn-bg)',c:'var(--warn)'}:{t:'Quiz aprobado — falta tu firma',b:'var(--warn-bg)',c:'var(--warn)'}):{t:'Pendiente',b:'var(--bad-bg)',c:'var(--bad)'});
+    const puedeFirmar=aprobadoQuiz&&r.presente&&!capFirmaOk(r)&&vig.txt!=='Vencida';
     const puedeRendir=QUIZ[k];
     return `<div class="miniwork" style="align-items:center">
       <div style="flex:1"><b>${capName(k)}</b><div style="font-size:11px;margin-top:2px">${alerta}</div></div>
       <span class="capstate" style="background:${estado.b};color:${estado.c};margin-right:8px">${estado.t}</span>
-      ${puedeRendir?`<button class="btn btn-gold" style="flex:none;padding:6px 14px;font-size:12px" onclick="ctRendir('${k}')">${aprobadoQuiz?'Rehacer':'Realizar'}</button>`:'<span style="font-size:11px;color:var(--muted)">Sin quiz</span>'}
+      ${puedeFirmar?`<button class="btn btn-gold" style="flex:none;padding:6px 14px;font-size:12px;margin-right:6px" onclick="ctFirmar('${k}')">Firmar constancia</button>`:''}${puedeRendir?`<button class="btn btn-gold" style="flex:none;padding:6px 14px;font-size:12px" onclick="ctRendir('${k}')">${aprobadoQuiz?'Rehacer':'Realizar'}</button>`:'<span style="font-size:11px;color:var(--muted)">Sin quiz</span>'}
     </div>`;
   }).join('');
   return `<div class="card">
     <div class="k">Mis capacitaciones (PAC)</div>
-    <p style="font-size:12px;color:var(--muted);margin:4px 0 12px">Realizá o actualizá tus capacitaciones. Al aprobar el examen (${UMBRAL}%) queda registrado. La hoja de firmas la valida Seguridad e Higiene para completar la evidencia.</p>
+    <p style="font-size:12px;color:var(--muted);margin:4px 0 12px">Realizá o actualizá tus capacitaciones. Al aprobar el examen (${UMBRAL}%) queda registrado. Después firmás la constancia desde acá y Seguridad e Higiene y el licenciado la validan.</p>
     ${filas}
   </div>`;
 }
 function ctRendir(k){ rendirExamenCt(ct.loged,k); }
+function ctFirmar(k){
+  const cid=ct.loged,r=capReg[cid][k];
+  if(!(r.presente&&r.nota!==null&&r.nota>=UMBRAL)){alert('Primero tenés que aprobar el examen.');return;}
+  if(!confirm('Firma electrónica\n\nDeclaro haber asistido y recibido la capacitación "'+capName(k)+'" realizada el '+fmt(new Date(r.fecha+'T12:00:00'))+'.\n\nFirmo con mi usuario personal ('+pdCname(cid)+'). Queda registrado con fecha y hora.'))return;
+  r.fe={ts:Date.now(),por:pdCname(cid)};capTouch(cid,k);renderWizard();updateBoard();
+  alert('Firmaste la constancia. Queda pendiente la validación de Seguridad e Higiene.');
+}
 
 /* --- Mi documentación: ver, adjuntar (queda pend. de aprobación de Edu) --- */
 function viewMisDocs(){
@@ -1317,14 +1329,14 @@ function responderCt(i){
   const cid=examCtxCt.cid,k=examCtxCt.k,aprob=nota>=UMBRAL;
   const r=capReg[cid][k];
   r.nota=nota;
-  if(aprob){ r.presente=true; r.fecha=new Date().toISOString().slice(0,10); } // realizada hoy
+  if(aprob){ r.presente=true; r.fecha=new Date().toISOString().slice(0,10); r.fe=null; r.okRef=false; r.okLic=false; r.lic=''; r.firmas=[]; } // realizada hoy: la firma y las validaciones son de esta capacitacion nueva
   capTouch(cid,k);
   document.getElementById('mBody').innerHTML=`
     <div style="text-align:center;padding:20px 0">
       <div style="font-size:44px;font-weight:800;color:${aprob?'var(--ok)':'var(--bad)'}">${nota}%</div>
       <div style="font-size:15px;font-weight:700;color:${aprob?'var(--ok)':'var(--bad)'};margin-top:6px">${aprob?'Aprobado':'No aprobado'}</div>
       <div style="font-size:12.5px;color:var(--muted);margin-top:8px">${examCtxCt.aciertos} de ${quiz.preguntas.length} correctas · umbral ${UMBRAL}%</div>
-      ${aprob?'<div style="font-size:12px;color:var(--warn);margin-top:12px;max-width:340px;margin-left:auto;margin-right:auto">Tu examen quedó registrado. Para completar la evidencia, Seguridad e Higiene sube la hoja de firmas de la capacitación.</div>':'<div style="font-size:12px;color:var(--muted);margin-top:12px">Volvé a intentarlo cuando repases el material.</div>'}
+      ${aprob?'<div style="font-size:12px;color:var(--warn);margin-top:12px;max-width:340px;margin-left:auto;margin-right:auto">Tu examen quedó registrado. Ahora firmá la constancia desde Mis capacitaciones; después la validan Seguridad e Higiene y el licenciado.</div>':'<div style="font-size:12px;color:var(--muted);margin-top:12px">Volvé a intentarlo cuando repases el material.</div>'}
       <button class="btn btn-gold" style="flex:none;padding:10px 26px;margin-top:18px" onclick="cerrarExamenCt()">Cerrar</button>
     </div>`;
 }
