@@ -404,8 +404,15 @@ const CONTRACTORS = {
 /* adjuntos de certificado por contratista (memoria) */
 const polizaDoc={}; Object.keys(CONTRACTORS).forEach(c=>polizaDoc[c]=null); polizaDoc.mansilla=""; polizaDoc.chazarreta="certificado-64580105 (19/10/2026) + libre deuda 29/09/2026";
 /* Rubros que cubre cada contratista segun su certificado (S&H los puede ajustar en la app) */
-CONTRACTORS.mansilla.rubros=['elec'];
-CONTRACTORS.chazarreta.rubros=['alb','plom','pint','mant'];
+CONTRACTORS.mansilla.rubros=['elec','alt'];
+CONTRACTORS.chazarreta.rubros=['alb','plom','pint','mant','alt'];
+/* Habilitacion de altura: tope de metros segun certificado (null = el certificado no fija maximo) */
+const HABIL={alt:{n:'Trabajos en altura (SOP 07)'}};
+const ALT_MAX={mansilla:null,chazarreta:4};
+function altTope(cid){return Object.prototype.hasOwnProperty.call(ALT_MAX,cid)?ALT_MAX[cid]:null;}
+function altHab(cid){return rubrosDe(cid).includes('alt');}
+/* clausula de no repeticion: vigente si el certificado la trae y no esta vencido (rige con el certificado) */
+function norepVigente(cid){const s=CONTRACTORS[cid]&&CONTRACTORS[cid].seguro;if(!s||!s.norep)return false;return polizaStatus(s.hasta).txt!=='Vencida';}
 
 /* fecha base de capacitaciones (editable) */
 const FECHA_BASE = "2026-07-17"; /* fecha de la constancia firmada por el Lic. Arias (17/7) */
@@ -2037,12 +2044,13 @@ function otHabiles(n){let f=pdHoy(),c=0;while(c<n){f=pdAdd(f,1);if(!pdNoLab(f))c
 function otPlazoFecha(k){return k==='urg'?otHabiles(2):k==='sem'?pdSigLab(pdAdd(pdHoy(),7)):k==='q'?pdSigLab(pdAdd(pdHoy(),15)):k==='m'?pdSigLab(pdAdd(pdHoy(),30)):'';}
 function otPrioDe(f){const d=pdDias(f);return d<=3?'Alta':d<=10?'Media':'Baja';}
 function otPlazoN(o){const p=OT_PLAZOS.find(x=>x[0]===o.plazo);return p?(p[0]==='otro'?'fecha elegida':p[1].toLowerCase()):'';}
-function cxTVacia(){return{titulo:'',rubro:'',impl:[],cts:[]};}
+function cxTVacia(){return{titulo:'',rubro:'',impl:[],cts:[],altM:''};}
 function cxVacio(){return{fotos:[],editId:null,sector:'',tipo:'',desc:'',plazo:'',fecha:'',tareas:[cxTVacia()]};}
 let cxForm=cxVacio();
 function cxSet(campo,val){cxForm[campo]=val;if(campo==='plazo'&&val!=='otro')cxForm.fecha=otPlazoFecha(val);renderCxNueva();}
-function cxTSet(i,campo,val){const t=cxForm.tareas[i];t[campo]=val;if(campo==='rubro'){const l=rubroCts(val);t.cts=l.length===1?[l[0]]:[];}renderCxNueva();}
-function cxTTog(i,campo,val){const a=cxForm.tareas[i][campo];const j=a.indexOf(val);if(j<0)a.push(val);else a.splice(j,1);renderCxNueva();}
+function cxHabCts(t){let l=t.rubro?rubroCts(t.rubro):[];if((t.impl||[]).includes('alt'))l=l.filter(altHab);return l;}
+function cxTSet(i,campo,val){const t=cxForm.tareas[i];t[campo]=val;if(campo==='rubro'){const l=cxHabCts(t);t.cts=l.length===1?[l[0]]:[];}renderCxNueva();}
+function cxTTog(i,campo,val){const t=cxForm.tareas[i];const a=t[campo];const j=a.indexOf(val);if(j<0)a.push(val);else a.splice(j,1);if(campo==='impl'){const l=cxHabCts(t);t.cts=t.cts.filter(c=>l.includes(c));if(!t.cts.length&&t.rubro&&l.length===1)t.cts=[l[0]];}renderCxNueva();}
 function cxTAdd(){cxForm.tareas.push(cxTVacia());renderCxNueva();}
 function cxTDel(i){cxForm.tareas.splice(i,1);if(!cxForm.tareas.length)cxForm.tareas.push(cxTVacia());renderCxNueva();}
 const cxSel=(on,onclick,txt,sub)=>`<button type="button" class="sel ${on?'on':''}" onclick="${onclick}">${txt}${sub?`<small>${sub}</small>`:''}</button>`;
@@ -2058,15 +2066,16 @@ function renderCxNueva(){
   const box=document.getElementById('cxNuevaRoot');if(!box)return;
   const f=cxForm,e=f.editId?otPorId(f.editId):null;
   const tarea=(tt,i)=>{
-    const hab=tt.rubro?rubroCts(tt.rubro):[];
+    const hab=cxHabCts(tt);
     return `<div class="card" style="border-left:4px solid var(--gold);margin-top:12px"><div style="display:flex;justify-content:space-between;align-items:center"><div class="k">Tarea ${i+1}</div>${(f.tareas.length>1&&!e)?`<button class="pbtn r" onclick="cxTDel(${i})">Quitar</button>`:''}</div>
       <div class="pk">¿Qué hay que hacer?</div><input class="pi" value="${esc(tt.titulo)}" oninput="cxForm.tareas[${i}].titulo=this.value" placeholder="Ej.: Cambiar luminarias del pasillo de picking">
       <div class="pk">Rubro (qué oficio lo hace)</div><div class="selrow">${Object.keys(RUBROS).map(k=>cxSel(tt.rubro===k,`cxTSet(${i},'rubro','${k}')`,RUBROS[k].n)).join('')}</div>
       <div class="pk">¿Qué implica? <span style="font-weight:400;text-transform:none;letter-spacing:0">(tildá lo que corresponda; define los permisos)</span></div>
       <div class="selrow">${Object.keys(OT_IMPL).map(k=>cxSel(tt.impl.includes(k),`cxTTog(${i},'impl','${k}')`,OT_IMPL[k].l)).join('')}</div>
+      ${tt.impl.includes('alt')?`<div class="pk">Altura aproximada del trabajo (metros)</div><input class="pi" type="number" min="1" step="0.5" style="max-width:140px" value="${esc(tt.altM)}" oninput="cxForm.tareas[${i}].altM=this.value" placeholder="Ej.: 3.5"><div style="font-size:11.5px;color:var(--muted);margin-top:4px">Solo se puede asignar a quien esté habilitado para altura. Chazarreta cubre hasta 4 m.</div>`:''}
       <div style="margin-top:10px">${cxPrev(tt)}</div>
       <div class="pk">¿Quién lo hace?</div>
-      ${!tt.rubro?'<div style="font-size:12.5px;color:var(--muted)">Elegí primero el rubro.</div>':(hab.length?`<div class="selrow">${hab.map(c=>cxSel(tt.cts.includes(c),`cxTTog(${i},'cts','${c}')`,esc(pdCname(c)))).join('')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:6px">Solo aparecen los contratistas cuya cobertura incluye ${esc(RUBROS[tt.rubro].n)}.</div>`:`<div class="info-note" style="background:var(--bad-bg);border-color:#e6b3a8;color:var(--bad);font-size:12.5px">Ningún contratista cargado cubre ${esc(RUBROS[tt.rubro].n)}. Consultá con Seguridad e Higiene antes de pedirlo.</div>`)}
+      ${!tt.rubro?'<div style="font-size:12.5px;color:var(--muted)">Elegí primero el rubro.</div>':(hab.length?`<div class="selrow">${hab.map(c=>cxSel(tt.cts.includes(c),`cxTTog(${i},'cts','${c}')`,esc(pdCname(c)))).join('')}</div><div style="font-size:11.5px;color:var(--muted);margin-top:6px">Solo aparecen los contratistas cuya cobertura incluye ${esc(RUBROS[tt.rubro].n)}${tt.impl.includes('alt')?' y trabajos en altura':''}.</div>`:`<div class="info-note" style="background:var(--bad-bg);border-color:#e6b3a8;color:var(--bad);font-size:12.5px">Ningún contratista cargado cubre ${esc(RUBROS[tt.rubro].n)}${tt.impl.includes('alt')?' con habilitación de altura':''}. Consultá con Seguridad e Higiene antes de pedirlo.</div>`)}
     </div>`;
   };
   box.innerHTML=intHeader()+otSyncBar()+`<div class="card"><div class="k">${e?'Corregir y reenviar '+e.id:'Pedir un trabajo'}</div>
@@ -2099,13 +2108,18 @@ function cxGuardar(){
     if(!t.rubro){alert(n+'elegí el rubro.');return;}
     if(!t.cts.length){alert(n+'elegí quién lo hace.');return;}
     if(t.cts.some(c=>!rubrosDe(c).includes(t.rubro))){alert(n+'alguno de los elegidos no está habilitado para ese rubro.');return;}
+    if(t.impl.includes('alt')){
+      if(!(parseFloat(t.altM)>0)){alert(n+'indicá la altura aproximada en metros.');return;}
+      const m=parseFloat(t.altM);const mal=t.cts.find(c=>!altHab(c));if(mal){alert(n+pdCname(mal)+' no está habilitado para trabajos en altura.');return;}
+      const ex=t.cts.find(c=>altTope(c)&&m>altTope(c));if(ex){alert(n+pdCname(ex)+' cubre hasta '+altTope(ex)+' m de altura; el trabajo es de '+m+' m. Asignalo a otro contratista o consultá al productor.');return;}
+    }
   }
   let comp=f.fecha;if(pdNoLab(comp)){const nn=pdSigLab(comp);alert('Esa fecha cae domingo o feriado. La pasé al '+pdFmt(nn)+'.');comp=nn;}
   const a=otActor(),uid=(INT.user&&INT.user.id)||PERFIL;
   const grupo=f.tareas.length>1?('G-'+Math.random().toString(36).slice(2,7).toUpperCase()):'';
   const creadas=[];
   f.tareas.forEach((t,i)=>{
-    const datos={titulo:t.titulo.trim(),sector:f.sector.trim(),desc:(f.desc||'').trim()||t.titulo.trim(),tipo:f.tipo,rubro:t.rubro,impl:[...t.impl],contratistas:[...t.cts],plazo:f.plazo,compromiso:comp,prio:otPrioDe(comp),grupo,grupoN:i+1,grupoT:f.tareas.length};
+    const datos={titulo:t.titulo.trim(),sector:f.sector.trim(),desc:(f.desc||'').trim()||t.titulo.trim(),tipo:f.tipo,rubro:t.rubro,impl:[...t.impl],altM:t.impl.includes('alt')?parseFloat(t.altM)||null:null,contratistas:[...t.cts],plazo:f.plazo,compromiso:comp,prio:otPrioDe(comp),grupo,grupoN:i+1,grupoT:f.tareas.length};
     let o=(f.editId&&i===0)?otPorId(f.editId):null;
     if(o){Object.assign(o,datos);o.estado='pend_hab';o.rechazo=null;if(f.fotos.length){o.ev=o.ev||{};o.ev.ref=[...(o.ev.ref||[]),...f.fotos];}otLog(o,'Corregida y reenviada a Depósito');}
     else{o=Object.assign({id:otNuevoId(),creada:pdHoy(),creadaPor:a.nombre,creadaRol:a.rol,creadaId:uid,estado:'pend_hab',ev:{ref:[...f.fotos],antes:[],despues:[],extra:[]},hist:[]},datos);OT.ots.push(o);otLog(o,'Orden creada y enviada a habilitación'+(grupo?' (tarea '+(i+1)+' de '+f.tareas.length+')':''));}
@@ -2121,7 +2135,7 @@ function renderCxMis(){
   const l=OT.ots.filter(mio).sort((a,b)=>(b.ts||0)-(a.ts||0));
   box.innerHTML=intHeader()+otSyncBar()+(l.map(o=>otCard(o,`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${o.estado==='rechazada'?`<button class="pbtn g" onclick="cxEditar('${o.id}')">Corregir y reenviar</button>`:''}${['pend_hab','rechazada','habilitada'].includes(o.estado)?`<button class="pbtn r" onclick="otCancelar('${o.id}')">Cancelar orden</button>`:''}${otAvisarBtn(o)}</div>`)).join('')||'<div class="card" style="font-size:13px;color:var(--muted)">Todavía no cargaste órdenes.</div>');
 }
-function cxEditar(id){const o=otPorId(id);cxForm={fotos:[],editId:id,sector:o.sector,desc:o.desc===o.titulo?'':o.desc,tipo:o.tipo,plazo:o.plazo||'otro',fecha:o.compromiso,tareas:[{titulo:o.titulo,rubro:o.rubro||'',impl:[...(o.impl||[])],cts:[...o.contratistas]}]};show('cx-nueva',document.querySelector('nav.tabs button[data-v="cx-nueva"]'));}
+function cxEditar(id){const o=otPorId(id);cxForm={fotos:[],editId:id,sector:o.sector,desc:o.desc===o.titulo?'':o.desc,tipo:o.tipo,plazo:o.plazo||'otro',fecha:o.compromiso,tareas:[{titulo:o.titulo,rubro:o.rubro||'',impl:[...(o.impl||[])],cts:[...o.contratistas],altM:o.altM||''}]};show('cx-nueva',document.querySelector('nav.tabs button[data-v="cx-nueva"]'));}
 function otCancelar(id){const o=otPorId(id);if(!o)return;const m=prompt('Motivo de la cancelación:');if(!m)return;o.estado='cancelada';otLog(o,'Orden cancelada',m);otSave();otRefresh();}
 
 /* ============ JEFE DE DEPÓSITO ============ */
@@ -2184,7 +2198,10 @@ function otValida(o){
     const c=CONTRACTORS[cid];const s=c&&c.seguro;
     if(!s)items.push({ok:false,txt:pdPila(cid)+': sin seguro cargado'});
     else{const st=polizaStatus(s.hasta);items.push({ok:st.txt!=='Vencida',txt:pdPila(cid)+': seguro '+st.txt.toLowerCase()+' (hasta '+fmt(new Date(s.hasta+'T12:00:00'))+')'});}
+    if(s){const okN=norepVigente(cid);items.push({ok:okN,txt:pdPila(cid)+': cláusula de no repetición a favor de Beccacece Hnos. '+(okN?'vigente':'NO vigente o no incluida en el certificado')});}
     if(o.rubro&&RUBROS[o.rubro]){const okR=rubrosDe(cid).includes(o.rubro);items.push({ok:okR,txt:pdPila(cid)+': '+(okR?'habilitado para '+RUBROS[o.rubro].n+' según su cobertura':'NO está habilitado para '+RUBROS[o.rubro].n+' según su cobertura. Reasignar esta tarea a quien corresponda.')});}
+    if((o.impl||[]).includes('alt')){const okA=altHab(cid);items.push({ok:okA,txt:pdPila(cid)+': '+(okA?'habilitado para trabajos en altura':'NO está habilitado para trabajos en altura')});
+      if(o.altM&&altTope(cid)){const okM=o.altM<=altTope(cid);items.push({ok:okM,txt:pdPila(cid)+': altura del trabajo '+o.altM+' m, '+(okM?'dentro del tope de cobertura ('+altTope(cid)+' m)':'SUPERA el tope de cobertura ('+altTope(cid)+' m)')});}}
     req.forEach(k=>otCapEnsure(cid,k));
     const mal=req.filter(k=>{const iso=capDates[cid]&&capDates[cid][k];if(!iso)return true;const st=capStatus(iso);return !(st.txt==='Al día'||st.txt==='Por vencer');});
     items.push({ok:!mal.length,txt:pdPila(cid)+': capacitaciones '+(mal.length?'con faltantes — '+mal.map(capName).join(', '):'al día ('+req.length+')')});
@@ -2262,7 +2279,9 @@ function renderOTs(){
       <button class="pbtn g" onclick="actuarComo('capex')">Actuar como Líder de Capex</button> <button class="pbtn g" onclick="actuarComo('deposito')">Actuar como Jefe de Depósito</button>
       <div class="pk" style="margin-top:14px">Usuarios internos habilitados</div>${USUARIOS_INT.length?USUARIOS_INT.map(u=>`<div style="font-size:12.5px">${OT_ROL[u.rol]}: <b>${esc(u.nombre)}</b></div>`).join(''):'<div style="font-size:12.5px;color:var(--bad)">Ninguno cargado todavía. Sin usuarios, el Líder de Capex y el Jefe de Depósito no pueden entrar (se cargan en el archivo con nombre y DNI).</div>'}
       <div class="pk" style="margin-top:14px">Líderes de sector habilitados</div>${leadersHTML()}
-      <div class="pk" style="margin-top:14px">Rubros que cubre cada contratista (según su certificado)</div>${Object.keys(CONTRACTORS).map(cid=>`<div style="font-size:12.5px;margin:6px 0"><b>${esc(pdCname(cid))}</b><div class="selrow" style="margin-top:4px">${Object.keys(RUBROS).map(k=>`<label style="display:inline-flex;gap:5px;align-items:center;margin-right:12px;font-size:12px"><input type="checkbox" ${rubrosDe(cid).includes(k)?'checked':''} onchange="rubroSet('${cid}','${k}',this.checked)"> ${RUBROS[k].n}</label>`).join('')}</div></div>`).join('')}
+      <div class="pk" style="margin-top:14px">Rubros que cubre cada contratista (según su certificado)</div>${Object.keys(CONTRACTORS).map(cid=>`<div style="font-size:12.5px;margin:6px 0"><b>${esc(pdCname(cid))}</b><div class="selrow" style="margin-top:4px">${Object.keys(RUBROS).map(k=>`<label style="display:inline-flex;gap:5px;align-items:center;margin-right:12px;font-size:12px"><input type="checkbox" ${rubrosDe(cid).includes(k)?'checked':''} onchange="rubroSet('${cid}','${k}',this.checked)"> ${RUBROS[k].n}</label>`).join('')}</div>
+        <div class="selrow" style="margin-top:6px;padding-top:6px;border-top:1px dashed #d9cfae"><label style="display:inline-flex;gap:5px;align-items:center;margin-right:12px;font-size:12px"><input type="checkbox" ${altHab(cid)?'checked':''} onchange="rubroSet('${cid}','alt',this.checked)"> <b>${HABIL.alt.n}</b></label>${(()=>{const iso=capDates[cid]&&capDates[cid].alt;const st=iso?capStatus(iso):null;const okc=st&&(st.txt==='Al día'||st.txt==='Por vencer');return `<span style="font-size:11.5px;color:var(--muted)">${altTope(cid)?'Tope de cobertura: '+altTope(cid)+' m.':'Desde 2 m con arnés y línea de vida; el certificado no fija máximo.'} Capacitación de altura: <b style="color:${okc?'var(--ok)':'var(--bad)'}">${st?st.txt:'sin registrar'}</b></span>`;})()}</div>
+        <div style="font-size:11.5px;margin-top:5px;color:${norepVigente(cid)?'var(--ok)':'var(--bad)'};font-weight:600">${norepVigente(cid)?'✓ Cláusula de no repetición vigente a favor de Beccacece Hnos. (hasta '+fmt(new Date(CONTRACTORS[cid].seguro.hasta+'T12:00:00'))+')':'✗ Cláusula de no repetición NO vigente'}</div></div>`).join('')}
       <div style="font-size:11.5px;color:var(--muted)">Una tarea solo puede asignarse a quien cubra su rubro. Ajustalo si el certificado o la productora confirman otra cosa.</div>
       <div style="font-size:11.5px;color:var(--muted);margin-top:10px">Sincronización entre dispositivos: ${SYNC.url?'activa':'no configurada (se usan paquetes)'}.</div></div>`;
 }
@@ -2274,7 +2293,7 @@ function openOTPT(id){
   document.getElementById('mRetro').style.display='none';document.querySelector('#modalBg .mfoot').style.display='';
   const req=otReqCaps(o);
   const caps=req.map(k=>`<li>${capName(k)} <span style="color:var(--muted);font-size:12px">— ${o.contratistas.map(cid=>{const iso=capDates[cid]&&capDates[cid][k];return iso?CONTRACTORS[cid].av+': '+capStatus(iso).txt+' · realizada el '+fmt(new Date(iso+'T12:00:00'))+' · vence '+fmt(addYear(iso)):CONTRACTORS[cid].av+': no registrada';}).join(' · ')}</span></li>`).join('');
-  const seg=o.contratistas.map(cid=>{const s=CONTRACTORS[cid].seguro;if(!s)return '';const st=polizaStatus(s.hasta);return `${CONTRACTORS[cid].av}: ${s.cia} — póliza ${s.poliza}, ${s.actividad}, vigente hasta ${fmt(new Date(s.hasta+'T12:00:00'))} (${st.txt}). ${s.exclusiones||''}`;}).join('<br>');
+  const seg=o.contratistas.map(cid=>{const s=CONTRACTORS[cid].seguro;if(!s)return '';const st=polizaStatus(s.hasta);return `${CONTRACTORS[cid].av}: ${s.cia} — póliza ${s.poliza}, ${s.actividad}, vigente hasta ${fmt(new Date(s.hasta+'T12:00:00'))} (${st.txt}). <b>Cláusula de no repetición a favor de Beccacece Hnos.: ${norepVigente(cid)?'vigente':'NO vigente'}.</b> ${s.exclusiones||''}`;}).join('<br>');
   document.getElementById('mBody').innerHTML=`<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px 22px">
     <div style="display:flex;justify-content:space-between;border-bottom:2px solid var(--navy);padding-bottom:10px;margin-bottom:14px"><div><b style="font-size:15px;color:var(--navy)">Beccacece Hnos. S.A.</b><div style="font-size:11px;color:var(--muted)">Permiso de trabajo — Gestión de contratistas (SOP 13)</div></div>
       <div style="text-align:right;font-size:12px"><b>${o.id}</b><div>${o.pt?'Emitido el '+pdFmt(o.pt.fecha):'<span style="color:var(--warn)">Aún no emitido</span>'}</div></div></div>
@@ -2284,6 +2303,7 @@ function openOTPT(id){
     <div style="margin-bottom:13px"><div class="k">Contratista(s)</div><div style="font-size:13px">${o.contratistas.map(pdCname).join(', ')}</div></div>
     <div style="margin-bottom:13px"><div class="k">Cobertura de seguro</div><div style="font-size:12.5px;line-height:1.5">${seg}</div></div>
     ${segAlturaBlock(o.contratistas,t.pts)}
+    ${o.altM?`<div style="margin-bottom:13px"><div class="k">Altura declarada del trabajo</div><div style="font-size:13px"><b>${o.altM} m</b>${o.contratistas.map(c=>altTope(c)?' · tope de cobertura de '+esc(pdCname(c))+': '+altTope(c)+' m':' · '+esc(pdCname(c))+': el certificado no fija tope').join('')}</div></div>`:''}
     <div style="margin-bottom:13px"><div class="k">EPP obligatorio</div><div style="font-size:13px;line-height:1.5">${esc(t.epp)}</div></div>
     <div style="margin-bottom:13px"><div class="k">Capacitaciones necesarias</div><ul style="margin:5px 0 0 18px;font-size:13px;line-height:1.8">${caps}</ul></div>
     <div style="margin-bottom:13px"><div class="k">Evidencia fotográfica exigida</div><div style="font-size:13px">${o.tipo==='nuevo'?'Trabajo nuevo: fotos de la instalación terminada (el antes es opcional).':'Reparación: fotos del ANTES (previo a empezar) y del DESPUÉS (al terminar).'}</div></div>
