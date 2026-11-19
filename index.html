@@ -819,6 +819,24 @@ async function fotosSubir(){
 function renderGrid(){
   const g=document.getElementById('grid');g.innerHTML='';
   if(PERFIL==='syh'){const fb=fotosBoxHTML();if(fb){const b=document.createElement('div');b.className='card';b.style.gridColumn='1/-1';b.innerHTML=fb;g.appendChild(b);}}
+  if(PERFIL==='syh'&&FILTER==='all'&&OT.ots.length){
+    const bx=document.createElement('div');bx.style.gridColumn='1/-1';
+    const lista=[...OT.ots].sort((x,y)=>String(y.creada||'').localeCompare(String(x.creada||'')));
+    bx.innerHTML=`<div class="k" style="margin:4px 0 8px;color:var(--gold)">Órdenes de trabajo cargadas en la app (${lista.length})</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">${lista.map(o=>{
+        const e=OT_ESTADOS[o.estado]||{t:o.estado,bg:'var(--warn-bg)',c:'var(--warn)'};
+        const nf=['ref','antes','despues','extra'].reduce((n,c)=>n+((o.ev&&o.ev[c])||[]).length,0);
+        return `<div class="exp"><div class="head"><span class="status" style="background:${e.bg};color:${e.c}">${esc(e.t)}</span>
+          <div class="date">${o.creada?pdFmt(o.creada):''}${o.grupo?' · Tarea '+o.grupoN+' de '+o.grupoT:''}</div>
+          <div class="title">${esc(o.titulo)}</div></div>
+          <div class="body">
+            <div class="row"><div class="k">Pedida por</div><div>${esc(o.creadaPor||'')} (${esc(o.creadaRol||'')}) · Sector: ${esc(o.sector||'—')}</div></div>
+            <div class="row"><div class="k">Contratista</div><div>${(o.contratistas||[]).map(pdCname).join(', ')||'—'}${o.rubro&&RUBROS[o.rubro]?' · '+RUBROS[o.rubro].n:''}</div></div>
+            <div class="row"><div class="k">Plazo</div><div>${o.compromiso?pdFmt(o.compromiso):'—'}${o.fechaCierre?' · cerrada el '+pdFmt(o.fechaCierre):''}${o.conforme?' · OK Depósito '+pdFmt(o.conforme.fecha):''}</div></div>
+            <div class="evidence"><div class="k" style="margin-bottom:6px">Evidencia (${nf})</div>${otEvHTML(o)||'<div style="font-size:12px;color:var(--muted)">Sin fotos todavía.</div>'}</div>
+          </div></div>`;}).join('')}</div>`;
+    g.appendChild(bx);
+  }
   DATA.filter(passFilter).forEach(d=>{
     const st=statusOf(d),ev=evN(d.id)>0;
     const el=document.createElement('div');el.className='exp';
@@ -2380,6 +2398,7 @@ function renderOtTablero(){
 
 /* ---- refresco general ---- */
 function otRefresh(){
+  if(typeof renderGrid==='function'&&PERFIL==='syh'&&document.getElementById('grid'))renderGrid();
   if(typeof renderOTs==='function'){renderOTs();renderCxNueva();renderCxMis();renderDpHab();renderDpOk();renderDpSeg();renderOtTablero();}
   if(PERFIL==='contratista'&&ct.loged)renderWizard();
 }
